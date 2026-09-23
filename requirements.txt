@@ -1,0 +1,14 @@
+# Game plumbing
+playwright>=1.45
+numpy
+opencv-python
+pyyaml
+gymnasium>=1.0
+
+# Learning / tooling
+stable-baselines3
+tensorboard
+
+# PyTorch: install separately so you get the right build for each machine.
+#   Laptop (CPU):     pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   Desktop (NVIDIA): pick the CUDA command at https://pytorch.org/get-started/locally/

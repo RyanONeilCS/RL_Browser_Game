@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Toy Car</title>
+  <style>
+    body { margin: 0; background: #222; color: #ddd; font: 13px system-ui, sans-serif; }
+    #wrap { display: flex; flex-direction: column; align-items: center; padding: 12px; gap: 8px; }
+    canvas { display: block; background: #3a7d3a; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="600" height="600"></canvas>
+    <div>Arrows / WASD: drive &middot; R: reset &middot; D: debug overlay &middot; H: HUD &middot; mode: <span id="mode"></span></div>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
