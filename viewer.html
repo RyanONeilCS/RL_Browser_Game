@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Training Replay</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e2e2e0;
+    --series: #2a6cf0; --accent: #2a6cf0; --grid: #ececea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151517; --panel: #1f1f22; --ink: #ececef; --muted: #9a9aa2; --line: #333338;
+      --series: #6b9cff; --accent: #6b9cff; --grid: #2a2a2e;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; }
+  .bar label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+  button, select { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px;
+                   background: var(--panel); color: var(--ink); cursor: pointer; }
+  input[type=range] { width: 220px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 600px) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  canvas { width: 100%; height: auto; display: block; border-radius: 6px; }
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 16px; margin-top: 10px; }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .v { font-size: 18px; font-variant-numeric: tabular-nums; }
+  .chart-title { font-weight: 600; margin-bottom: 2px; }
+  .chart-sub { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .chart-wrap { position: relative; }
+  svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+         border-radius: 6px; padding: 6px 8px; font-size: 12px; white-space: nowrap;
+         box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  #drop.over { outline: 2px dashed var(--accent); outline-offset: 4px; }
+</style>
+</head>
+<body>
+<main id="drop">
+  <h1>Training replay</h1>
+  <div class="bar">
+    <label>Recording <input type="file" id="file" accept=".jsonl,.json"></label>
+    <button id="play" disabled>Play</button>
+    <label>Speed
+      <select id="speed">
+        <option value="1">1×</option><option value="4">4×</option>
+        <option value="16" selected>16×</option><option value="64">64×</option>
+      </select>
+    </label>
+    <label>Episode <input type="range" id="slider" min="0" max="0" value="0" disabled></label>
+    <label><input type="checkbox" id="trails" checked> Earlier paths</label>
+  </div>
+
+  <div class="layout">
+    <div class="card">
+      <canvas id="track" width="600" height="600"></canvas>
+      <div class="stats">
+        <div class="stat"><div class="k">Episode</div><div class="v" id="s-ep">–</div></div>
+        <div class="stat"><div class="k">Training steps so far</div><div class="v" id="s-steps">–</div></div>
+        <div class="stat"><div class="k">Checkpoints</div><div class="v" id="s-cp">–</div></div>
+        <div class="stat"><div class="k">Result</div><div class="v" id="s-res">–</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chart-title">Checkpoints reached per episode</div>
+      <div class="chart-sub">Each point is one recorded episode; the dashed line is a full lap.</div>
+      <div class="chart-wrap" id="chart-wrap">
+        <div class="empty" id="empty">Choose a <code>.jsonl</code> recording from <code>runs/</code> (or drop it on the page).</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const canvas = $('track'), ctx = canvas.getContext('2d');
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  let track = null, episodes = [], cur = 0, t = 0, playing = false, last = 0;
+
+  // ---- loading ----------------------------------------------------------
+  function load(text) {
+    track = null; episodes = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }   // last line may be half-written mid-training
+      if (obj.type === 'track') track = obj;
+      else if (obj.type === 'episode') episodes.push(obj);
+    }
+    if (!track || !episodes.length) { $('empty').textContent = 'No episodes in this file yet.'; return; }
+    $('slider').max = episodes.length - 1;
+    $('slider').disabled = $('play').disabled = false;
+    cur = 0; t = 0;
+    buildChart();
+    setEpisode(0);
+    if (!playing) togglePlay();
+  }
+  function readFile(f) { f.text().then(load); }
+  $('file').addEventListener('change', e => e.target.files[0] && readFile(e.target.files[0]));
+  const drop = $('drop');
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('over');
+    if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
+  });
+
+  // ---- playback ---------------------------------------------------------
+  const STEPS_PER_SEC = 15;   // one env step = 4 game frames at 60 fps
+
+  function togglePlay() {
+    playing = !playing;
+    $('play').textContent = playing ? 'Pause' : 'Play';
+    last = performance.now();
+  }
+  $('play').addEventListener('click', togglePlay);
+  $('slider').addEventListener('input', e => { setEpisode(+e.target.value); t = 0; });
+  $('trails').addEventListener('change', draw);
+
+  function setEpisode(i) {
+    cur = Math.max(0, Math.min(episodes.length - 1, i));
+    $('slider').value = cur;
+    const ep = episodes[cur];
+    $('s-ep').textContent = `${ep.episode}`;
+    $('s-steps').textContent = ep.totalSteps.toLocaleString();
+    $('s-cp').textContent = `${ep.checkpoints} / ${ep.numCheckpoints}`;
+    $('s-res').textContent = ep.finished ? `Lap ✓ ${ep.seconds}s` : ep.crashed ? `Crashed (${ep.seconds}s)` : `Time up`;
+    markChart();
+  }
+
+  function tick(now) {
+    if (playing && episodes.length) {
+      t += Math.max(0, now - last) / 1000 * STEPS_PER_SEC * +$('speed').value;
+      const len = episodes[cur].path.length;
+      if (t >= len + 4) {                        // short pause at the end of each episode
+        t = 0;
+        if (cur < episodes.length - 1) setEpisode(cur + 1);
+        else togglePlay();
+      }
+    }
+    last = now;
+    draw();
+    requestAnimationFrame(tick);
+  }
+
+  // ---- track drawing ----------------------------------------------------
+  function draw() {
+    ctx.fillStyle = '#3a7d3a';
+    ctx.fillRect(0, 0, 600, 600);
+    if (!track) return;
+    const cl = track.centerline;
+    ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.beginPath();
+    cl.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.closePath();
+    ctx.strokeStyle = '#eee'; ctx.lineWidth = track.halfWidth * 2 + 6; ctx.stroke();
+    ctx.strokeStyle = '#555'; ctx.lineWidth = track.halfWidth * 2; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+    for (const g of track.gates) { ctx.beginPath(); ctx.moveTo(g.a.x, g.a.y); ctx.lineTo(g.b.x, g.b.y); ctx.stroke(); }
+
+    // Earlier episodes: one hue, older = fainter.
+    if ($('trails').checked) {
+      const from = Math.max(0, cur - 40);
+      for (let i = from; i < cur; i++) {
+        const age = (cur - i) / (cur - from);
+        ctx.strokeStyle = `rgba(255, 200, 60, ${0.08 + 0.45 * (1 - age)})`;
+        ctx.lineWidth = 1.5;
+        path(episodes[i].path, episodes[i].path.length);
+      }
+    }
+    const ep = episodes[cur];
+    const n = Math.max(1, Math.min(ep.path.length, Math.floor(t) + 1));
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    path(ep.path, n);
+    const [x, y, a] = ep.path[n - 1];
+    ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+    ctx.fillStyle = (n === ep.path.length && ep.crashed) ? '#c33' : '#2a6cf0';
+    ctx.fillRect(-11, -6, 22, 12);
+    ctx.fillStyle = '#9cf'; ctx.fillRect(3, -5, 5, 10);
+    ctx.restore();
+  }
+  function path(p, n) {
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) i ? ctx.lineTo(p[i][0], p[i][1]) : ctx.moveTo(p[i][0], p[i][1]);
+    ctx.stroke();
+  }
+
+  // ---- progress chart ---------------------------------------------------
+  const CW = 460, CH = 300, M = { l: 40, r: 12, t: 10, b: 36 };
+  let sx, sy, svg, marker, cross, tip;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    parent && parent.appendChild(e);
+    return e;
+  };
+
+  function buildChart() {
+    const wrap = $('chart-wrap');
+    wrap.innerHTML = '';
+    svg = el('svg', { viewBox: `0 0 ${CW} ${CH}`, role: 'img',
+                      'aria-label': 'Checkpoints reached per recorded episode over training steps' }, wrap);
+    const xMax = episodes[episodes.length - 1].totalSteps || 1;
+    const lap = episodes[0].numCheckpoints;
+    const yMax = Math.max(lap, ...episodes.map(e => e.checkpoints));
+    sx = v => M.l + (v / xMax) * (CW - M.l - M.r);
+    sy = v => CH - M.b - (v / yMax) * (CH - M.t - M.b);
+
+    const muted = css('--muted'), grid = css('--grid'), series = css('--series');
+    for (const v of [0, lap / 2, lap]) {
+      el('line', { x1: M.l, x2: CW - M.r, y1: sy(v), y2: sy(v), stroke: grid, 'stroke-width': 1,
+                   'stroke-dasharray': v === lap ? '4 4' : '' }, svg);
+      el('text', { x: M.l - 6, y: sy(v) + 4, 'text-anchor': 'end', fill: muted, 'font-size': 11 }, svg).textContent = v;
+    }
+    for (const f of [0, 0.5, 1]) {
+      const v = Math.round(xMax * f);
+      el('text', { x: sx(v), y: CH - M.b + 16, 'text-anchor': f === 0 ? 'start' : f === 1 ? 'end' : 'middle',
+                   fill: muted, 'font-size': 11 }, svg).textContent = v.toLocaleString();
+    }
+    el('text', { x: (M.l + CW - M.r) / 2, y: CH - 4, 'text-anchor': 'middle', fill: muted, 'font-size': 11 }, svg)
+      .textContent = 'training steps';
+
+    el('polyline', { points: episodes.map(e => `${sx(e.totalSteps)},${sy(e.checkpoints)}`).join(' '),
+                     fill: 'none', stroke: series, 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
+
+    cross = el('line', { y1: M.t, y2: CH - M.b, stroke: muted, 'stroke-width': 1, visibility: 'hidden' }, svg);
+    marker = el('circle', { r: 5, fill: series, stroke: css('--panel'), 'stroke-width': 2 }, svg);
+
+    tip = document.createElement('div');
+    tip.className = 'tip'; tip.hidden = true;
+    wrap.appendChild(tip);
+
+    // Hover: nearest episode by x; click jumps playback to it.
+    const hit = el('rect', { x: M.l, y: M.t, width: CW - M.l - M.r, height: CH - M.t - M.b,
+                             fill: 'transparent', style: 'cursor:pointer' }, svg);
+    const nearest = evt => {
+      const r = svg.getBoundingClientRect();
+      const x = (evt.clientX - r.left) / r.width * CW;
+      let best = 0;
+      episodes.forEach((e, i) => { if (Math.abs(sx(e.totalSteps) - x) < Math.abs(sx(episodes[best].totalSteps) - x)) best = i; });
+      return best;
+    };
+    hit.addEventListener('mousemove', evt => {
+      const i = nearest(evt), e = episodes[i];
+      cross.setAttribute('x1', sx(e.totalSteps)); cross.setAttribute('x2', sx(e.totalSteps));
+      cross.setAttribute('visibility', 'visible');
+      tip.hidden = false;
+      tip.innerHTML = `<b>Episode ${e.episode}</b><br>${e.totalSteps.toLocaleString()} steps<br>` +
+                      `${e.checkpoints}/${e.numCheckpoints} checkpoints · ${e.finished ? 'lap ' + e.seconds + 's' : e.crashed ? 'crashed' : 'time up'}`;
+      const r = svg.getBoundingClientRect(), px = sx(e.totalSteps) / CW * r.width;
+      tip.style.left = Math.min(px + 12, r.width - tip.offsetWidth) + 'px';
+      tip.style.top = '8px';
+    });
+    hit.addEventListener('mouseleave', () => { cross.setAttribute('visibility', 'hidden'); tip.hidden = true; });
+    hit.addEventListener('click', evt => { setEpisode(nearest(evt)); t = 0; });
+    markChart();
+  }
+  function markChart() {
+    if (!marker || !episodes[cur]) return;
+    marker.setAttribute('cx', sx(episodes[cur].totalSteps));
+    marker.setAttribute('cy', sy(episodes[cur].checkpoints));
+  }
+
+  draw();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
