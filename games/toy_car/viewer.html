@@ -67,6 +67,8 @@
         <div class="stat"><div class="k">Training steps so far</div><div class="v" id="s-steps">–</div></div>
         <div class="stat"><div class="k">Checkpoints</div><div class="v" id="s-cp">–</div></div>
         <div class="stat"><div class="k">Result</div><div class="v" id="s-res">–</div></div>
+        <div class="stat"><div class="k">Speed now</div><div class="v" id="s-speed">–</div></div>
+        <div class="stat"><div class="k">Average speed this episode</div><div class="v" id="s-avg">–</div></div>
       </div>
     </div>
     <div class="card">
@@ -134,9 +136,15 @@
     $('s-ep').textContent = `${ep.episode}`;
     $('s-steps').textContent = ep.totalSteps.toLocaleString();
     $('s-cp').textContent = `${ep.checkpoints} / ${ep.numCheckpoints}`;
+    const avg = ep.path.reduce((sum, p) => sum + p[3], 0) / ep.path.length;
+    $('s-avg').textContent = fmtSpeed(avg);
     $('s-res').textContent = ep.finished ? `Lap ✓ ${ep.seconds}s` : ep.crashed ? `Crashed (${ep.seconds}s)` : `Time up`;
     markChart();
   }
+
+  // Old recordings don't store maxSpeed; fall back to the game's values per difficulty.
+  const maxSpeed = () => track.maxSpeed ?? { easy: 260, hard: 360 }[track.difficulty];
+  const fmtSpeed = v => maxSpeed() ? `${Math.round(v)} (${Math.round(100 * v / maxSpeed())}% of max)` : `${Math.round(v)}`;
 
   function tick(now) {
     if (playing && episodes.length) {
@@ -182,7 +190,13 @@
     const n = Math.max(1, Math.min(ep.path.length, Math.floor(t) + 1));
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     path(ep.path, n);
-    const [x, y, a] = ep.path[n - 1];
+    // Recorded points are 4 frames apart: interpolate between them so playback is smooth.
+    const p0 = ep.path[n - 1], p1 = ep.path[Math.min(n, ep.path.length - 1)];
+    const f = n < ep.path.length ? t - Math.floor(t) : 0;
+    const da = Math.atan2(Math.sin(p1[2] - p0[2]), Math.cos(p1[2] - p0[2]));   // shortest turn
+    const x = p0[0] + (p1[0] - p0[0]) * f, y = p0[1] + (p1[1] - p0[1]) * f, a = p0[2] + da * f;
+    if (f > 0) { ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(x, y); ctx.stroke(); }
+    $('s-speed').textContent = fmtSpeed(p0[3] + (p1[3] - p0[3]) * f);
     ctx.save(); ctx.translate(x, y); ctx.rotate(a);
     ctx.fillStyle = (n === ep.path.length && ep.crashed) ? '#c33' : '#2a6cf0';
     ctx.fillRect(-11, -6, 22, 12);

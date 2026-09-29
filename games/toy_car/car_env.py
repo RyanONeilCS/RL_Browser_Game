@@ -1,6 +1,4 @@
 """Gymnasium environment for the toy car game. The TODOs are yours to write."""
-from turtle import speed
-
 import gymnasium as gym
 import numpy as np
 
@@ -22,10 +20,16 @@ ACTIONS = [
 
 
 class CarEnv(gym.Env):
-    def __init__(self, headless=True, difficulty=DIFFICULTY, record_file=None):
+    def __init__(self, headless=True, difficulty=DIFFICULTY, record_file=None, random_starts=False):
         super().__init__()
         # record_file="runs/my_run.jsonl" saves the car's path every 10th episode for viewer.html
+        # random_starts=True: every reset without a seed starts at a random checkpoint (used for evaluation)
         self.game = BrowserGame(headless=headless, difficulty=difficulty, record_file=record_file)
+        self.random_starts = random_starts
+
+        # gap[k] = distance from checkpoint k-1 to checkpoint k, for measuring progress between checkpoints
+        cps = self.game.page.evaluate("window.getTrack()")["checkpoints"]
+        self.gap = [np.hypot(cps[k]["x"] - cps[k - 1]["x"], cps[k]["y"] - cps[k - 1]["y"]) for k in range(len(cps))]
         self.action_space = gym.spaces.Discrete(len(ACTIONS))
 
         # TODO: self.observation_space = gym.spaces.Box(...)
@@ -36,7 +40,9 @@ class CarEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        state = self.game.reset()   # TODO (optional): pass a seed for random start positions
+        if seed is None and self.random_starts:
+            seed = int(self.np_random.integers(2**31))
+        state = self.game.reset(seed)   # seed=None: normal start line; a number: random start checkpoint + heading
         self.prev_state = state
 
         obs = self._get_obs(state)
@@ -57,7 +63,8 @@ class CarEnv(gym.Env):
         elif (state["truncated"]):
             truncated = True
         
-        info = {"checkpoints": state["checkpointsPassed"], "crashed": state["crashed"], "lap": state["lap"]}
+        info = {"checkpoints": state["checkpointsPassed"], "crashed": state["crashed"], "lap": state["lap"],
+                "speed": state["speed"] / state["maxSpeed"], "seconds": state["frame"] * state["dt"]}
 
         self.prev_state = state
         return obs, reward, terminated, truncated, info
@@ -75,18 +82,21 @@ class CarEnv(gym.Env):
         return np.array([speed, angle_sin, angle_cos, dist, *rays], dtype=np.float32)
 
 
+    def _progress(self, state):
+        # How far around the track the car is, in checkpoints: 3.4 = passed 3, 40% of the way to the 4th.
+        # Smooth across checkpoints, so no distance goes unpaid (the v1 bug).
+        return state["checkpointsPassed"] + 1 - state["distToCheckpoint"] / self.gap[state["nextCheckpoint"]]
+
     def _get_reward(self, prev_state, state):
         reward = 0.0
-        passed = state["checkpointsPassed"] > prev_state["checkpointsPassed"]
 
-        if passed:
-            reward += 1 #passed a checkpoint
-        else:
-            reward += (prev_state["distToCheckpoint"] - state["distToCheckpoint"]) / 100
+        # v3: progress made this step (potential-based shaping). Adds up to ~16 per lap at any speed,
+        # so faster laps are always worth more (fewer -0.03 steps), and it still gives a signal every step.
+        reward += self._progress(state) - self._progress(prev_state)
 
         if state["crashed"]:
-            reward -= 10 #crashed
+            reward -= 20 #crashed
 
-        reward -= .01 #ever iteration for trying to be faster
+        reward -= .03 #ever iteration for trying to be faster
 
         return reward

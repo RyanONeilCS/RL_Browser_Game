@@ -1,8 +1,9 @@
-"""Runs the toy car game in Chromium (via Playwright) so Python can play it.
+"""Runs the toy car game in Chromium so Python can play it, using the game's own JavaScript API
+(window.resetGame / stepGame / gameState). General browser control is in core/browser.py.
 
 You shouldn't need to change this file. Run it directly to watch random driving:
 
-    python browser_game.py
+    python games/toy_car/browser_game.py
 
 Recording for viewer.html: pass record_file="runs/my_run.jsonl" and the car's path
 for every `record_every`-th episode is saved while you train (works with any agent).
@@ -12,9 +13,7 @@ import random
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
-from playwright.sync_api import sync_playwright
+from core.browser import Browser
 
 GAME_URL = (Path(__file__).parent / "game" / "index.html").resolve().as_uri()
 
@@ -30,7 +29,6 @@ class BrowserGame:
         """
         self.realtime = realtime
         self.frames_per_action = frames_per_action
-        self._held = set()
 
         self._record = None
         self._record_every = record_every
@@ -38,19 +36,11 @@ class BrowserGame:
         self._total_steps = 0      # steps across all episodes
         self._path = []
 
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(
-            headless=headless,
-            args=["--disable-background-timer-throttling",
-                  "--disable-renderer-backgrounding",
-                  "--disable-backgrounding-occluded-windows"],
-        )
-        self.page = self._browser.new_page(viewport={"width": 700, "height": 700})
-        self.page.goto(GAME_URL)
+        self.browser = Browser(GAME_URL, headless=headless)
+        self.page = self.browser.page
         self.page.wait_for_function("window.gameReady === true")
         self.page.evaluate(f"window.gameConfig.difficulty = '{difficulty}'")
         self.page.evaluate(f"window.setMode('{'realtime' if realtime else 'stepped'}')")
-        self.canvas = self.page.locator("canvas")
         self.reset()
 
         if record_file:
@@ -58,6 +48,7 @@ class BrowserGame:
             self._record = open(record_file, "w", encoding="utf-8")
             track = self.page.evaluate("window.getTrack()")
             self._write({"type": "track", "difficulty": difficulty, "recordEvery": record_every,
+                         "maxSpeed": self._last_state["maxSpeed"],
                          "halfWidth": track["halfWidth"], "gates": track["gates"],
                          "centerline": [[round(p["x"], 1), round(p["y"], 1)] for p in track["centerline"]]})
 
@@ -92,16 +83,13 @@ class BrowserGame:
 
     def frame(self):
         """Screenshot of the game as an RGB numpy array (600, 600, 3)."""
-        png = self.canvas.screenshot(type="png")
-        bgr = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
-        return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        return self.browser.screenshot()
 
     def close(self):
         self._finish_episode()
         if self._record:
             self._record.close()
-        self._browser.close()
-        self._pw.stop()
+        self.browser.close()
 
     def _finish_episode(self):
         # Called on reset/close: count the episode that just ended and save its path if recorded.
@@ -122,15 +110,9 @@ class BrowserGame:
         self._record.flush()   # so the viewer can load the file while training is still running
 
     def _hold(self, keys):
-        # Real-time mode only: press new keys, release ones no longer wanted.
-        if not self.realtime:
-            return
-        want = set(keys)
-        for k in self._held - want:
-            self.page.keyboard.up(k)
-        for k in want - self._held:
-            self.page.keyboard.down(k)
-        self._held = want
+        # Real-time mode only (in stepped mode the keys are passed to stepGame instead).
+        if self.realtime:
+            self.browser.hold(keys)
 
 
 if __name__ == "__main__":

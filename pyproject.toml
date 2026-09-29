@@ -1,0 +1,14 @@
+# Makes core/ importable from every game folder (`from core.browser import Browser`).
+# One-time, with the venv active:  pip install -e .
+# (-e = editable: changes to core/ take effect immediately, no reinstall needed)
+[project]
+name = "rl-browser-games"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["core"]

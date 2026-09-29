@@ -6,3 +6,6 @@ checkpoints/
 videos/
 *.zip
 models/
+*.egg-info/
+
+screenshots/
