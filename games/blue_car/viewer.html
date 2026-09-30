@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blue Car Replay</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e2e2e0; --grid: #ececea;
+    --accent: #2a6cf0; --avg: #1d1d1f;
+    --won: #2e9e5b; --offroad: #e08a2b; --lost: #d64545; --time: #8a8a90; --restart: #c4c4c8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151517; --panel: #1f1f22; --ink: #ececef; --muted: #9a9aa2; --line: #333338; --grid: #2a2a2e;
+      --accent: #6b9cff; --avg: #ececef;
+      --won: #4cc47e; --offroad: #f0a04b; --lost: #f06a6a; --time: #9a9aa2; --restart: #55555c;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 12px; font-size: 13px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; }
+  .bar label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+  button, select { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px;
+                   background: var(--panel); color: var(--ink); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=range] { width: 220px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 500px) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 950px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  canvas { width: 100%; height: auto; display: block; border-radius: 6px; background: #000; }
+  #strip { margin-top: 6px; height: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 16px; margin-top: 10px; }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .v { font-size: 16px; font-variant-numeric: tabular-nums; }
+  .title { font-weight: 600; margin-bottom: 2px; }
+  .hint { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+                         margin-right: 5px; background: var(--c); vertical-align: -1px; }
+  .chart-wrap { position: relative; }
+  svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+         border-radius: 6px; padding: 6px 8px; font-size: 12px; white-space: nowrap;
+         box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 16px; margin-bottom: 10px; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  #drop.over { outline: 2px dashed var(--accent); outline-offset: 4px; }
+</style>
+</head>
+<body>
+<main id="drop">
+  <h1>Blue Car training replay</h1>
+  <p class="sub">Choose <code>runs/&lt;run&gt;_replay.jsonl</code> (training, game 1) or <code>runs/test_&lt;model&gt;.jsonl</code>
+    (test.py). Choose it again to load newer episodes while training runs.</p>
+  <div class="bar">
+    <label>Recording <input type="file" id="file" accept=".jsonl,.json"></label>
+    <button id="play" disabled>Play</button>
+    <label>Speed
+      <select id="speed">
+        <option value="1">1× (real time)</option><option value="4">4×</option>
+        <option value="16" selected>16×</option><option value="64">64×</option>
+      </select>
+    </label>
+    <label>Recorded episode <input type="range" id="slider" min="0" max="0" value="0" disabled></label>
+    <label><input type="checkbox" id="advance" checked> Then the next one</label>
+  </div>
+
+  <div class="layout">
+    <div class="card">
+      <canvas id="screen" width="480" height="288"></canvas>
+      <canvas id="strip" width="480" height="14"></canvas>
+      <div class="stats">
+        <div class="stat"><div class="k">Episode</div><div class="v" id="s-ep">–</div></div>
+        <div class="stat"><div class="k">Training step (approx.)</div><div class="v" id="s-train">–</div></div>
+        <div class="stat"><div class="k">Result</div><div class="v" id="s-res">–</div></div>
+        <div class="stat"><div class="k">Step</div><div class="v" id="s-step">–</div></div>
+        <div class="stat"><div class="k">Action</div><div class="v" id="s-act">–</div></div>
+        <div class="stat"><div class="k">Reward (step / total)</div><div class="v" id="s-rew">–</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="summary" id="summary"></div>
+      <div class="title">Cubes per episode over training</div>
+      <div class="hint">Every episode of game 1 is a dot, coloured by how it ended; ringed dots have pictures
+        (click one to watch it). The line is the average of the last 20 episodes.</div>
+      <div class="chart-wrap" id="chart-wrap">
+        <div class="empty" id="empty">Choose a recording (or drop it on the page).</div>
+      </div>
+      <div class="legend">
+        <span style="--c: var(--won)">won</span><span style="--c: var(--offroad)">off road</span>
+        <span style="--c: var(--lost)">lost</span><span style="--c: var(--time)">time limit</span>
+        <span style="--c: var(--restart)">cut by batch restart</span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const colorOf = ended => css({ "won": "--won", "off road": "--offroad", "lost": "--lost",
+                                 "time limit": "--time", "restart": "--restart" }[ended] || "--time");
+  const STEPS_PER_SEC = 6.5;                       // real-time pace of the env (~0.15 s per step)
+  let header = null, episodes = [], recorded = [], cur = 0, t = 0, playing = false, last = 0;
+  let images = [], imagesFor = -1;
+
+  // ---- loading ----------------------------------------------------------
+  function load(text) {
+    header = null; episodes = [];
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      let o; try { o = JSON.parse(line); } catch { continue; }   // last line may be half-written
+      if (o.type === "run") header = o; else if (o.type === "episode") episodes.push(o);
+    }
+    recorded = episodes.filter(e => e.frames && e.frames.length);
+    $("slider").max = Math.max(0, recorded.length - 1);
+    $("slider").disabled = $("play").disabled = !recorded.length;
+    summary(); chart();
+    if (recorded.length) { setEpisode(Math.min(cur, recorded.length - 1)); }
+  }
+  const readFile = f => f.text().then(load);
+  $("file").addEventListener("change", e => e.target.files[0] && readFile(e.target.files[0]));
+  const drop = $("drop");
+  drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over");
+                                       if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]); });
+
+  // ---- summary numbers --------------------------------------------------
+  function summary() {
+    const done = episodes.filter(e => e.ended !== "restart");
+    const lastN = done.slice(-50);
+    const rate = a => a.length ? Math.round(100 * a.filter(e => e.ended === "won").length / a.length) + "%" : "–";
+    const cubes = a => a.length ? (a.reduce((s, e) => s + (e.cubes || 0), 0) / a.length).toFixed(1) : "–";
+    const items = [["Episodes", episodes.length], ["Won (last 50)", rate(lastN)],
+                   ["Avg cubes (last 50)", cubes(lastN)], ["Most cubes", Math.max(0, ...episodes.map(e => e.cubes || 0))]];
+    $("summary").innerHTML = items.map(([k, v]) =>
+      `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  }
+
+  // ---- playback ---------------------------------------------------------
+  function setEpisode(i) {
+    cur = Math.max(0, Math.min(recorded.length - 1, i)); t = 0;
+    $("slider").value = cur;
+    const ep = recorded[cur];
+    images = ep.frames.map(b64 => { const im = new Image(); im.src = "data:image/jpeg;base64," + b64; return im; });
+    imagesFor = cur;
+    $("s-ep").textContent = `${ep.episode}  (${cur + 1}/${recorded.length} recorded)`;
+    $("s-train").textContent = (ep.train_step || 0).toLocaleString();
+    $("s-res").innerHTML = `<span style="color:${colorOf(ep.ended)}">${ep.ended}</span>, ${ep.cubes} cubes`;
+    drawStrip(); markChart();
+  }
+  function togglePlay() {
+    playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; last = performance.now();
+  }
+  $("play").addEventListener("click", togglePlay);
+  $("slider").addEventListener("input", e => setEpisode(+e.target.value));
+
+  function tick(now) {
+    if (playing && recorded.length) {
+      t += Math.max(0, now - last) / 1000 * STEPS_PER_SEC * +$("speed").value;
+      const n = recorded[cur].frames.length;
+      if (t >= n + 3) {                                     // short pause at the end of each episode
+        if ($("advance").checked && cur < recorded.length - 1) setEpisode(cur + 1);
+        else { t = n - 1; togglePlay(); }
+      }
+    }
+    last = now; draw(); requestAnimationFrame(tick);
+  }
+
+  function draw() {
+    const cv = $("screen"), ctx = cv.getContext("2d");
+    if (!recorded.length) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cv.width, cv.height); return; }
+    const ep = recorded[cur], n = ep.frames.length, i = Math.min(n - 1, Math.floor(t));
+    const im = images[i];
+    if (im && im.complete) ctx.drawImage(im, 0, 0, cv.width, cv.height);
+    const d = ep.data[i] || {}, acts = (header && header.actions) || [];
+    const total = ep.data.slice(0, i + 1).reduce((s, x) => s + (x.r || 0), 0);
+    // on-screen label: action + reward
+    ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.fillRect(0, 0, cv.width, 24);
+    ctx.fillStyle = "#fff"; ctx.font = "13px system-ui, sans-serif";
+    ctx.fillText(`${acts[d.a] ?? d.a}   reward ${d.r >= 0 ? "+" : ""}${(d.r ?? 0).toFixed(2)}   cubes ${d.c ?? 0}` +
+                 (d.road === false ? "   OFF ROAD" : ""), 8, 16);
+    $("s-step").textContent = `${i + 1} / ${n}`;
+    $("s-act").textContent = acts[d.a] ?? d.a;
+    $("s-rew").textContent = `${(d.r ?? 0).toFixed(2)} / ${total.toFixed(1)}`;
+    drawStrip(i);
+  }
+
+  const ACT_COLORS = ["#777", "#2a6cf0", "#8a5cf0", "#20a3b5", "#b58ad6", "#6fc3cf", "#777"];
+  function drawStrip(i = -1) {
+    const cv = $("strip"), ctx = cv.getContext("2d"); ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!recorded.length) return;
+    const data = recorded[cur].data, w = cv.width / data.length;
+    data.forEach((d, k) => { ctx.fillStyle = ACT_COLORS[d.a] || "#777"; ctx.fillRect(k * w, 0, Math.ceil(w), 9); });
+    if (i >= 0) { ctx.fillStyle = css("--ink"); ctx.fillRect(i * w, 0, Math.max(2, w), 14); }
+  }
+
+  // ---- chart ------------------------------------------------------------
+  const CW = 620, CH = 320, M = { l: 40, r: 12, t: 10, b: 36 };
+  let sx, sy, marker;
+  function chart() {
+    const wrap = $("chart-wrap"); wrap.innerHTML = "";
+    if (!episodes.length) { wrap.innerHTML = '<div class="empty">No episodes in this file yet.</div>'; return; }
+    const xs = episodes.map(e => e.train_step || 0), ys = episodes.map(e => e.cubes || 0);
+    const xmax = Math.max(1, ...xs), ymax = Math.max(3, ...ys) + 1;
+    sx = x => M.l + (x / xmax) * (CW - M.l - M.r);
+    sy = y => CH - M.b - (y / ymax) * (CH - M.t - M.b);
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg"); svg.setAttribute("viewBox", `0 0 ${CW} ${CH}`);
+    const el = (tag, attrs, parent = svg) => { const e = document.createElementNS(ns, tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; };
+    for (let y = 0; y <= ymax; y += Math.ceil(ymax / 6)) {
+      el("line", { x1: M.l, x2: CW - M.r, y1: sy(y), y2: sy(y), stroke: css("--grid") });
+      el("text", { x: M.l - 6, y: sy(y) + 4, "text-anchor": "end", "font-size": 11, fill: css("--muted") }).textContent = y;
+    }
+    for (let k = 0; k <= 4; k++) {
+      const x = xmax * k / 4;
+      el("text", { x: sx(x), y: CH - M.b + 16, "text-anchor": "middle", "font-size": 11, fill: css("--muted") })
+        .textContent = x >= 1e6 ? (x / 1e6).toFixed(1) + "M" : x >= 1e4 ? Math.round(x / 1000) + "k" : Math.round(x);
+    }
+    el("text", { x: (M.l + CW - M.r) / 2, y: CH - 4, "text-anchor": "middle", "font-size": 11, fill: css("--muted") })
+      .textContent = "training step (approx.)";
+    // rolling average of the last 20 episodes
+    const pts = episodes.map((e, i) => { const w = episodes.slice(Math.max(0, i - 19), i + 1);
+      return [sx(e.train_step || 0), sy(w.reduce((s, x) => s + (x.cubes || 0), 0) / w.length)]; });
+    el("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: css("--avg"),
+                     "stroke-width": 2, opacity: .8 });
+    const recIndex = new Map(recorded.map((e, i) => [e, i]));
+    episodes.forEach(e => {
+      const r = recIndex.has(e);
+      const c = el("circle", { cx: sx(e.train_step || 0), cy: sy(e.cubes || 0), r: r ? 4.5 : 3,
+        fill: colorOf(e.ended), stroke: r ? css("--ink") : "none", "stroke-width": r ? 1.2 : 0, opacity: .9 });
+      c.style.cursor = r ? "pointer" : "default";
+      c.addEventListener("mouseenter", ev => showTip(ev, e, r));
+      c.addEventListener("mouseleave", () => tip.hidden = true);
+      if (r) c.addEventListener("click", () => { setEpisode(recIndex.get(e)); if (!playing) togglePlay(); });
+    });
+    marker = el("circle", { r: 8, fill: "none", stroke: css("--accent"), "stroke-width": 2, visibility: "hidden" });
+    wrap.appendChild(svg);
+    tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; wrap.appendChild(tip);
+    markChart();
+  }
+  let tip;
+  function showTip(ev, e, rec) {
+    const box = $("chart-wrap").getBoundingClientRect();
+    tip.innerHTML = `episode ${e.episode} · ${e.ended}<br>${e.cubes} cubes · reward ${e.reward}` +
+                    `<br>step ≈ ${(e.train_step || 0).toLocaleString()}${rec ? "<br><b>click to watch</b>" : ""}`;
+    tip.hidden = false;
+    tip.style.left = Math.min(box.width - 170, ev.clientX - box.left + 10) + "px";
+    tip.style.top = (ev.clientY - box.top - 10) + "px";
+  }
+  function markChart() {
+    if (!marker || !recorded.length) return;
+    const e = recorded[cur];
+    marker.setAttribute("cx", sx(e.train_step || 0)); marker.setAttribute("cy", sy(e.cubes || 0));
+    marker.setAttribute("visibility", "visible");
+  }
+
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

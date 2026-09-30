@@ -82,7 +82,37 @@ Key test screenshots: run `explore.py` (saved in `screenshots/`, not in git).
       YOU LOSE at the first curve).
       From playing it (Ryan): cube 2 is only ~5 s in at normal driving (cube 1 ~2 s), so the agent (8–17 s to
       cube 1) is simply far too slow. A 180° turn isn't possible without leaving the track.
-- [ ] 11. Train v4, then evaluate the checkpoints with `test.py`, compare with the random agent
+- [x] 11. v4 (from v3 800k), 1.2M steps / 6.2 h: **worse.** off_road 79% -> 98-100% within ~100k steps,
+      cubes 0.84 -> 0.48, cube 2 in 2 of 118 batches. Cause (checked by running v4_final and splitting the reward):
+      the still check fires while driving: 39% of gas-on-road steps counted as "still" (picture change median 23,
+      threshold 20, measured only at the bright start). Over 4 episodes: still penalty -29.4 vs gas +10.2.
+      Driving normally was punished, swerving (big picture change) wasn't -> off the road.
+- [x] 12. Reward v5: still penalty off (gas reward covers standing, off-road rule covers hiding). Resumed from v3 800k.
+      1.8 h / 350k steps: **worse** (cubes ~1.0 -> 0.3-0.4, entropy -0.40 -> -1.21, i.e. less and less sure).
+      Every resume from v3 got worse: its habits (dawdle, brake) fight each new reward.
+- [ ] 13. **v6, from scratch** (Ryan's call: stop building on v3).
+      Observation: 2 channels, gray road picture + **cube mask** (any 84x84 cell containing cube pixels = 255):
+      far cubes are invisible in the gray picture but a clear dot in the mask.
+      Reward: +1 per cube, **cube approach** (phi = sqrt(cube pixels) / 40, reward = phi now - phi before;
+      skipped for 3 steps after a pickup because the cube flares up and vanishes over ~2 steps),
+      +0.05 gas on the road, -20 losing / off road, no still penalty, no reverse.
+      Cube detector (bright orange: r > 150, g > 90, b < 90, r > b + 100): on ~70 screenshots far 160-260 px,
+      near 500-1,800, none 0, never anything but cubes. Traced driving straight: approach +0.02..+0.35 per step,
+      +1.04 on pickup, and cube 2 comes into view ~6 steps after cube 1 (then lost when driving straight past).
+- Recording tool for behavior cloning: `record_demo.py` (saves the same 2-channel obs + your action).
+- [x] 14. **Ryan's recordings (6 runs, 5 to the finish) showed the detectors were only right for the start of the
+      track**, the only part any agent or test had reached:
+      - **The finish:** "YOU WIN / PRESS BACKSPACE TO RESPAWN" on a bright green screen, ~20-25 s (125-160 steps)
+        after the start, 10-13 cubes. The game-over check counted it as LOSING (-20). Now: white text + green
+        (78-95% of the screen; normal driving at most 21%) = won: WIN_REWARD 30 + 0.1 per step under 300.
+      - **On-road:** later sections have darker, bluer lines; the old rule found none there, so every episode
+        would have ended there as "off road". New rule (bluish line pixels, threshold 800): on the road median
+        ~5,200, 5th pct 1,340, never below 800 for 10 steps in a row; off the road at most 467.
+      - **Cubes:** mostly real (very close cubes get huge on screen); fragments after a pickup are cube-coloured
+        too, so the pause after a pickup is 6 steps. Live cube count not verified yet (recorded frames are 3 steps apart).
+      - Replaying the recorded runs through the new logic: all 5 finished runs end as WON, none cut short.
+      - The recorder never ends runs by itself now, catches quick Backspace taps, and saves full-size frames.
+- Next: record Ryan driving and learn from it (behavior cloning), then improve with PPO.
 - Next if v4 doesn't reach cube 2: learn from human demos (behavior cloning), or a progress value from
   the game's code (ask the developer).
 
@@ -101,3 +131,17 @@ Key test screenshots: run `explore.py` (saved in `screenshots/`, not in git).
 - Is there an end to the road (finish line / lap) or does it go on forever?
 - Can we get the web export (the files behind the itch page) to run locally?
 - Does the game use the browser's clock for its timing (for speeding it up later)?
+
+## Behavior cloning (train_bc.py)
+
+- bc_v1 (all recordings so far: 10 runs, ~1,000 steps, 5 to the finish): learned "always gas" and drove straight
+  off at the first curve. Ryan steers with taps (gas, gas+right, gas, ...), so even in curves most steps say gas.
+- bc_v2: steering relabelled by intent (the direction tapped most within ±2 steps) and rare actions weighted up.
+  Now steers around the first curve, but goes off the road after cube 1 (36-65 steps). On a held-out run it
+  predicts Ryan's key only ~55% of the time (memorises the training runs within ~15 epochs): too little data.
+- Next: 10-15 more recorded runs, retrain, then PPO fine-tuning from the BC model (RESUME in train.py).
+
+## Watching the agent (viewer.html)
+
+- Training: game 1 of the 10 writes runs/<RUN>_replay.jsonl (a result line for each episode, pictures for
+  every 5th). Tests: test.py writes runs/test_<model>.jsonl. Open viewer.html and choose the file.

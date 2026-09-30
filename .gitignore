@@ -9,3 +9,4 @@ models/
 *.egg-info/
 
 screenshots/
+demos/

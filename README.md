@@ -18,7 +18,10 @@ Toy car (`games/toy_car/`):
 | open `games/toy_car/game/index.html` | Drive the toy car yourself (arrows/WASD, R = reset). Add `?difficulty=hard` for the hard track. |
 | `python games/toy_car/browser_game.py` | Plumbing check: random driving, prints steps per second. |
 | `python games/blue_car/train.py` | Blue Car: train with 12 games at once (~62 steps/s, 1.5M steps ≈ 7.5 h). Checkpoints every ~50k steps in `games/blue_car/models/v1_checkpoints/`. |
-| `python games/blue_car/test.py` | Blue Car: test a model (or a random agent with `MODEL = None`) without a window. |
+| `python games/blue_car/test.py` | Blue Car: test a model (or a random agent with `MODEL = None`) without a window: how each episode ended, cubes, wins. Saves the episodes to `games/blue_car/runs/test_<model>.jsonl` for the viewer. |
+| open `games/blue_car/viewer.html` | Blue Car: watch recorded episodes (training: `runs/<run>_replay.jsonl`, tests: `runs/test_<model>.jsonl`) at up to 64× speed, with a chart of every episode over training. |
+| `python games/blue_car/record_demo.py` | Blue Car: record yourself driving (for behavior cloning). Backspace = next run, Ctrl+C = stop and save to `games/blue_car/demos/`. |
+| `python games/blue_car/train_bc.py` | Blue Car: behavior cloning: train the network to copy all recordings in `demos/` (a few minutes, GPU). Saves a PPO model that `train.py` can continue from. |
 | `python games/blue_car/explore.py` | Blue Car: opens the game, tries each key, saves screenshots to `games/blue_car/screenshots/`, measures steps/s. See `games/blue_car/NOTES.md`. |
 | `cd games/toy_car` then `python -c "from stable_baselines3.common.env_checker import check_env; from car_env import CarEnv; env = CarEnv(); check_env(env); env.close(); print('ok')"` | Check the env's format after changing observations/actions. |
 
@@ -46,11 +49,15 @@ core/                       general code shared by every game (one copy; games i
   browser.py                open a page, hold/press keys, screenshots (GPU rendering), run JavaScript
   training_stats.py         avg_speed / lap_rate / lap_time in SB3's output and TensorBoard (racing games)
   realtime.py               for real-time games: restart games around PPO updates, log info values (e.g. cubes)
+  replay.py                 records episodes (small frames + per-step data) for a game's replay viewer
 games/
   blue_car/                 Blue Car (Unity WebGL, pixels, real time): framework, TODOs for the RL parts
     NOTES.md                what's known about the game + checklist progress (start here)
     blue_car_env.py         env: plumbing done; actions / observations / reward / game over are TODOs
     explore.py              tries keys, saves screenshots, measures speed (no RL)
+    record_demo.py          record yourself driving (for behavior cloning)
+    train_bc.py             behavior cloning: learn to copy the recordings
+    viewer.html             replay of recorded episodes + chart of training progress
     train.py  play.py  test.py
   toy_car/                  the toy car test game
     game/                   the game itself (open game/index.html to drive it yourself)
