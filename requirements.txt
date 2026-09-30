@@ -1,3 +1,6 @@
+# Use Python 3.12 (NOT 3.14): on 3.14, Playwright's sync API keeps every call's result in memory
+# (a new asyncio "awaited by" set never gets emptied), ~8 GB per game overnight.
+
 # Game plumbing
 playwright>=1.45
 numpy
@@ -7,7 +10,10 @@ gymnasium>=1.0
 # Learning / tooling
 stable-baselines3
 tensorboard
+psutil
 
 # PyTorch: install separately so you get the right build for each machine.
 #   Laptop (CPU):     pip install torch --index-url https://download.pytorch.org/whl/cpu
-#   Desktop (NVIDIA): pick the CUDA command at https://pytorch.org/get-started/locally/
+#   Desktop (NVIDIA): pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   (RTX 50-series needs CUDA 12.8 or newer). Install torch AFTER requirements.txt: stable-baselines3
+#   pulls in the CPU build, so uninstall that first (pip uninstall torch) if it got installed.

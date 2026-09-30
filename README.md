@@ -173,10 +173,11 @@ breaks you know where. Steps marked *(later)* use parts of `core/` that don't ex
 ## Setup
 
 ```bash
-python -m venv .venv
+py -V:Astral/CPython3.12.13 -m venv .venv    # Python 3.12, not 3.14 (memory leak, see requirements.txt)
 .venv\Scripts\activate
 pip install -r requirements.txt
-pip install torch --index-url https://download.pytorch.org/whl/cpu   # or the CUDA build on the desktop
+pip uninstall -y torch                                              # remove the CPU build SB3 pulled in
+pip install torch --index-url https://download.pytorch.org/whl/cu128 # desktop GPU (laptop: .../whl/cpu)
 python -m playwright install chromium
 pip install -e .                  # makes core/ importable from the game folders (once)
 python games/toy_car/browser_game.py
@@ -292,6 +293,11 @@ learning. Keep the crash penalty well above `time penalty / (1 − γ)` so crash
   `best_model_save_path="models/<track>/<name>_best/"`, `model.save("models/<track>/<name>_final")`.
   Otherwise the next run silently overwrites the last model.
 - `models/` and `runs/` are not in git: trained models only exist on the machine that trained them.
+- **Use Python 3.12.** On Python 3.14, Playwright's sync API keeps every call's result in memory forever
+  (3.14's new asyncio "awaited by" tracking never empties with Playwright's greenlets). Blue Car's 8 games
+  grew to ~8 GB each overnight and training slowed from 45 to 26 steps/s. Found by watching memory per
+  process, then `tracemalloc` (showed 3,000 kept screenshots), then following the references.
+- For long runs, check memory after the first hour (Task Manager): steady is fine, climbing = a leak.
 - Activate the venv in every new terminal (`.venv\Scripts\Activate.ps1`) and run scripts with `python games/toy_car/train.py`.
 
 ## Notes for future games
