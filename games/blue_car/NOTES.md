@@ -155,3 +155,31 @@ Key test screenshots: run `explore.py` (saved in `screenshots/`, not in git).
   stalled, 0-1% gas. Discounting: the agent expects driving to crash (-20 at ~step 40); stalling gives -20 only at
   step 90, which is worth ~40% less now. Putting off the failure beat risking it. Rule switched off (CUBE_TIMEOUT None).
 - v7b: continue v7 from v7_final with v7's exact settings, long run.
+
+## Speed: virtual time (tested 2026-10-01, night)
+
+- Real time is the bottleneck: ~6 steps/s per game no matter how fast the PC is (10 games in training: ~39 steps/s).
+- **Playwright's page.clock does NOT work with Unity:** after pausing it, the car never moved again (even after
+  resuming), though the screen kept rendering.
+- **Chrome DevTools virtual time works** (`Emulation.setVirtualTimePolicy`, in core/browser.py `use_virtual_time()`
+  / `advance(ms)`): the game is frozen between steps, physics behaves as in real time (driving straight: cube 1, then
+  off the road at the first curve), advancing 150 ms of game time takes ~3 ms.
+- The screenshot is then the bottleneck: DevTools `Page.captureScreenshot` of the canvas: identical picture, ~39 ms
+  vs ~84 ms with Playwright's locator screenshot. A smaller window doesn't help (Unity keeps 960x600, slower to scale).
+- 1 game: 12.8 steps/s with virtual time vs 5.3 real time (measured while a 10-game training ran).
+- **Real-time steps weren't a fixed amount of game time:** cube 1 at step 13 (real time, 1 game) vs 17 (virtual,
+  150 ms/step), so a real-time step was ~0.19 s (1 game) and ~0.26 s in 10-game training. Virtual time makes every
+  step identical. To continue from models trained in real time, use STEP_GAME_MS ~250; 150 for a fresh start.
+- With virtual time the games are frozen during PPO updates, so RestartAfterUpdate (batch restarts, ~1/3 of episodes
+  cut) isn't needed; train.py leaves it out when VIRTUAL_TIME is on.
+- Switch: VIRTUAL_TIME in blue_car_env.py (off by default until decided). speed_test.py measures N games.
+
+- **Multi-game speed (2026-10-01 morning, random mostly-gas actions, 60 s each):** virtual time 6 games 60 steps/s,
+  8 games 71, 10 games 76, 13 games 78 (saturated: screenshot capacity); real time 10 games 34. So ~2.2x more steps,
+  and with 250 ms per step each step also covers ~as much game time as a real-time training step. 8-10 games is the
+  sweet spot (13 only adds RAM use: 4.4 GB free).
+
+## v7b overnight result
+
+- 554k -> 1.75M steps, 6.9 h: cubes 1.9 -> ~2.8 (950k-1.55M), best batch 4.5, best episode 7 cubes, no wins.
+  Plateaued from ~950k; last 200k slightly lower (2.1). ep_rew -14 -> -7.

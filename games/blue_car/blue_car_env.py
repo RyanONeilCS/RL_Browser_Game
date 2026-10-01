@@ -18,6 +18,14 @@ import cv2
 GAME_URL = "https://html-classic.itch.zone/html/13523181/index.html"
 LOAD_SECONDS = 20        # Unity needs a while to load before it reacts to keys
 STEP_SECONDS = 1 / 15    # how long each action is held; with the screenshot, one step takes ~0.15 s (~6.7 steps/s)
+
+# Virtual time (core/browser.py): instead of playing in real time, freeze the game and run exactly STEP_GAME_MS of
+# game time per step, as fast as the computer can. Same game time per step as real time (~0.15 s incl. the
+# screenshot), so models trained either way are compatible. Measured with 1 game: ~3 ms per step to advance +
+# ~39 ms screenshot, vs 150 ms waiting + 84 ms screenshot in real time. The game also stays frozen while PPO
+# updates, so the batch restarts (core/realtime.py) are not needed. False = real time (as all runs up to v7b).
+VIRTUAL_TIME = False
+STEP_GAME_MS = 150
 RESPAWN_KEY = "Backspace"
 RESPAWN_SECONDS = 0.2    # wait after respawning. Measured: the respawn is done in < 0.1 s (12/12 resets back on
                          # the road at the start after 0.2 s). Keep it short: the games step in lockstep, so
@@ -116,7 +124,7 @@ ACTIONS = [
 
 
 class BlueCarEnv(gym.Env):
-    def __init__(self, headless=True, record_file=None, record_every=5, games=1):
+    def __init__(self, headless=True, record_file=None, record_every=5, games=1, virtual_time=None):
         """record_file: save episodes for viewer.html (runs/<run>_replay.jsonl); frames for every record_every-th
         episode, a result line for all. games: how many games train at once (to estimate the training step)."""
         super().__init__()
@@ -126,6 +134,10 @@ class BlueCarEnv(gym.Env):
         self.browser = Browser(GAME_URL, headless=headless, viewport=(960, 600))
         time.sleep(LOAD_SECONDS)
         self.browser.page.locator("canvas").click()   # the game only gets keys after a click (focus)
+        # virtual_time: None = the VIRTUAL_TIME setting; record_demo.py passes False (a human plays in real time)
+        self.virtual_time = VIRTUAL_TIME if virtual_time is None else virtual_time
+        if self.virtual_time:
+            self.browser.use_virtual_time()
 
         self.action_space = gym.spaces.Discrete(len(ACTIONS))
 
@@ -146,7 +158,7 @@ class BlueCarEnv(gym.Env):
         super().reset(seed=seed)
         self.browser.hold([])
         self.browser.press(RESPAWN_KEY)   # restarts at any time, lost or not (checked with explore.py)
-        time.sleep(RESPAWN_SECONDS)
+        self._wait(RESPAWN_SECONDS)
 
         frame = self.browser.screenshot()
         self.prev_frame = frame
@@ -165,7 +177,10 @@ class BlueCarEnv(gym.Env):
 
     def step(self, action):
         self.browser.hold(ACTIONS[action])
-        time.sleep(STEP_SECONDS)          # real time: the game runs while the keys are held
+        if self.virtual_time:
+            self.browser.advance(STEP_GAME_MS)   # exactly this much game time, then the game freezes again
+        else:
+            time.sleep(STEP_SECONDS)          # real time: the game runs while the keys are held
         frame = self.browser.screenshot()
         self.steps += 1
 
@@ -209,6 +224,13 @@ class BlueCarEnv(gym.Env):
 
         self.prev_frame = frame
         return obs, reward, terminated, truncated, info
+
+    def _wait(self, seconds):
+        """Let the game run for this long: real time, or that much virtual game time."""
+        if self.virtual_time:
+            self.browser.advance(int(seconds * 1000))
+        else:
+            time.sleep(seconds)
 
     def release_keys(self):
         """Let go of all keys (used by core.realtime.RestartAfterUpdate while PPO updates)."""

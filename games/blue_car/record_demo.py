@@ -68,7 +68,7 @@ def keys_to_action(held):
 
 
 def main():
-    env = m.BlueCarEnv(headless=False)   # opens the window, waits for the game to load, clicks for focus
+    env = m.BlueCarEnv(headless=False, virtual_time=False)   # a human plays in real time; opens, loads, clicks
     b = env.browser
     b.js(KEY_LISTENER)
     print("Recording. Drive in the game window (click it first). Backspace = restart. Ctrl+C here = stop and save.")

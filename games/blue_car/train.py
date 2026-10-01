@@ -13,7 +13,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, VecMonitor
 
-from blue_car_env import BlueCarEnv
+from blue_car_env import VIRTUAL_TIME, BlueCarEnv
 from core.realtime import InfoStats, RestartAfterUpdate
 
 RUN = "v7b"                # one name per run: used for the model files and the TensorBoard log
@@ -65,7 +65,9 @@ if __name__ == "__main__":   # required on Windows: each game process re-imports
     env = VecFrameStack(VecMonitor(SubprocVecEnv([lambda g=g: make_env(g) for g in range(GAMES)])), n_stack=4)
 
     callbacks = [
-        RestartAfterUpdate(),        # real time: release keys while PPO updates, restart games before each batch
+        # real time only: release keys while PPO updates, restart games before each batch
+        # (with virtual time the games are frozen during updates, so there is nothing to do)
+        *([] if VIRTUAL_TIME else [RestartAfterUpdate()]),
         # rollout/cubes = average cubes per episode; lost / off_road = fraction of episodes ending that way
         InfoStats(["cubes", "lost", "off_road", "won", "stalled"]),
         # Save a copy every ~50k steps, so a crash in the night doesn't lose everything.
