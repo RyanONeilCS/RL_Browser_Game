@@ -145,3 +145,13 @@ Key test screenshots: run `explore.py` (saved in `screenshots/`, not in git).
 
 - Training: game 1 of the 10 writes runs/<RUN>_replay.jsonl (a result line for each episode, pictures for
   every 5th). Tests: test.py writes runs/test_<model>.jsonl. Open viewer.html and choose the file.
+
+## PPO from the copy (v7, v8, v7b)
+
+- v7 (from bc_v4, learning rate 1e-4): ~1 cube and longer episodes by 100k (past the curve where the copy failed),
+  then learned to stand still (cubes 0 at 300k, episodes to the 1000-step limit), then recovered by itself:
+  1.2-1.7 cubes at 475-530k, still rising, but crawling (gas on only 12-25% of steps, ~700 steps per episode).
+- v8 (from v7_final + "stalled" rule: no new cube for 90 steps = -20): **failed.** Cubes 0.67 -> 0.1-0.25, ~85%
+  stalled, 0-1% gas. Discounting: the agent expects driving to crash (-20 at ~step 40); stalling gives -20 only at
+  step 90, which is worth ~40% less now. Putting off the failure beat risking it. Rule switched off (CUBE_TIMEOUT None).
+- v7b: continue v7 from v7_final with v7's exact settings, long run.

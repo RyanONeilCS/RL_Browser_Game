@@ -26,7 +26,7 @@ MAX_STEPS = 1000         # time limit per episode (truncated, not a real ending)
                          # Was 500: v3 often ran out of time dawdling before cube 2. Must not be longer than
                          # one PPO batch (N_STEPS in train.py), since the games restart after every batch.
 
-# Reward (v6): see NOTES.md for why
+# Reward (v7b = v7's reward; v8's stall rule is off): see NOTES.md for why
 CUBE_REWARD = 1.0        # the cube counter bottom-left went up
 LOSE_PENALTY = 20.0      # the "YOU LOSE" screen appeared, or off the road too long (was 10 until v3)
 
@@ -55,6 +55,16 @@ PICKUP_STEPS = 6         # ~1 s. Was 3: after a pickup, cube-coloured fragments 
 # Winning ends the episode with WIN_REWARD, plus FAST_BONUS for every step under FAST_STEPS (Ryan: 125-155 steps),
 # so a faster finish is worth more.
 WIN_REWARD = 30.0
+
+# v8: no new cube for CUBE_TIMEOUT steps = stalled = lost (LOSE_PENALTY). v7 (and v1) learned that standing still
+# is safest: without a still penalty it only costs -0.01 per step, crashing costs -20. The cube counter is the one
+# detector that's reliable everywhere, so "not progressing" is judged by it. Ryan's recordings: gaps between cubes
+# median 18 steps, 95% within 36, max 57 (also from the last cube to the finish), so 90 (~15 s) leaves room for
+# slower driving but makes standing still exactly as bad as crashing.
+# OFF since v8 failed: the agent believed driving leads to a crash (-20 at ~step 40), and stalling only gives -20
+# at step 90, which discounting makes ~40% cheaper. So it coasted until the timeout (0-1% gas, cubes 0.1-0.25).
+# None = off; a number = the rule is on.
+CUBE_TIMEOUT = None
 FAST_BONUS = 0.1
 FAST_STEPS = 300
 STEP_PENALTY = 0.01      # per step, so standing still isn't free (discounted, at most -1 in total: < LOSE_PENALTY)
@@ -130,6 +140,7 @@ class BlueCarEnv(gym.Env):
         self.collected = False
         self.total_reward = 0.0
         self.cubes_before_reset, self.reward_before_reset = 0, 0.0
+        self.steps_since_cube = 0
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -144,6 +155,7 @@ class BlueCarEnv(gym.Env):
         self.off_road_steps = 0
         self.pickup_steps_left = 0
         self.total_reward = 0.0
+        self.steps_since_cube = 0
         if self.recorder:
             if self.recorder.active and self.recorder.episode_steps:   # reset mid-episode: cut by a batch restart
                 self.recorder.end_episode({"ended": "restart", "cubes": self.cubes_before_reset,
@@ -174,10 +186,15 @@ class BlueCarEnv(gym.Env):
             reward += GAS_REWARD                            # v4: driving forward on the road
         if won:
             reward += WIN_REWARD + FAST_BONUS * max(0, FAST_STEPS - self.steps)
-        terminated = game_over or off_road or won
+        self.steps_since_cube = 0 if self.collected else self.steps_since_cube + 1   # collected: set by _get_reward
+        stalled = (CUBE_TIMEOUT is not None and not (won or game_over or off_road)
+                   and self.steps_since_cube >= CUBE_TIMEOUT)
+        if stalled:
+            reward -= LOSE_PENALTY                          # v8: no progress for too long counts as losing
+        terminated = game_over or off_road or won or stalled
         truncated = not terminated and self.steps >= MAX_STEPS
-        self.cubes += self.collected                        # set by _get_reward
-        info = {"cubes": self.cubes, "lost": game_over, "off_road": off_road, "won": won}
+        self.cubes += self.collected
+        info = {"cubes": self.cubes, "lost": game_over, "off_road": off_road, "won": won, "stalled": stalled}
 
         self.total_reward += reward
         self.cubes_before_reset, self.reward_before_reset = self.cubes, self.total_reward
@@ -185,7 +202,8 @@ class BlueCarEnv(gym.Env):
             self.recorder.add_step(frame[:572, :945], {"a": int(action), "r": round(float(reward), 3),
                                    "c": self.cubes, "road": bool(on_road)})
             if terminated or truncated:
-                ended = "won" if won else "lost" if game_over else "off road" if off_road else "time limit"
+                ended = ("won" if won else "lost" if game_over else "off road" if off_road
+                         else "stalled" if stalled else "time limit")
                 self.recorder.end_episode({"ended": ended, "cubes": self.cubes, "reward": round(self.total_reward, 2),
                                            "length": self.steps})
 

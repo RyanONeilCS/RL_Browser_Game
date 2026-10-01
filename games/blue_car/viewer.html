@@ -8,13 +8,13 @@
   :root {
     --bg: #f6f6f4; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e2e2e0; --grid: #ececea;
     --accent: #2a6cf0; --avg: #1d1d1f;
-    --won: #2e9e5b; --offroad: #e08a2b; --lost: #d64545; --time: #8a8a90; --restart: #c4c4c8;
+    --won: #2e9e5b; --offroad: #e08a2b; --lost: #d64545; --time: #8a8a90; --restart: #c4c4c8; --stalled: #9b59b6;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #151517; --panel: #1f1f22; --ink: #ececef; --muted: #9a9aa2; --line: #333338; --grid: #2a2a2e;
       --accent: #6b9cff; --avg: #ececef;
-      --won: #4cc47e; --offroad: #f0a04b; --lost: #f06a6a; --time: #9a9aa2; --restart: #55555c;
+      --won: #4cc47e; --offroad: #f0a04b; --lost: #f06a6a; --time: #9a9aa2; --restart: #55555c; --stalled: #b98ad6;
       color-scheme: dark;
     }
   }
@@ -93,7 +93,7 @@
       </div>
       <div class="legend">
         <span style="--c: var(--won)">won</span><span style="--c: var(--offroad)">off road</span>
-        <span style="--c: var(--lost)">lost</span><span style="--c: var(--time)">time limit</span>
+        <span style="--c: var(--lost)">lost</span><span style="--c: var(--stalled)">stalled (no cube)</span><span style="--c: var(--time)">time limit</span>
         <span style="--c: var(--restart)">cut by batch restart</span>
       </div>
     </div>
@@ -105,7 +105,7 @@
   const $ = id => document.getElementById(id);
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const colorOf = ended => css({ "won": "--won", "off road": "--offroad", "lost": "--lost",
-                                 "time limit": "--time", "restart": "--restart" }[ended] || "--time");
+                                 "time limit": "--time", "restart": "--restart", "stalled": "--stalled" }[ended] || "--time");
   const STEPS_PER_SEC = 6.5;                       // real-time pace of the env (~0.15 s per step)
   let header = null, episodes = [], recorded = [], cur = 0, t = 0, playing = false, last = 0;
   let images = [], imagesFor = -1;

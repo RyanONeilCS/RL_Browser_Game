@@ -16,7 +16,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, VecMo
 from blue_car_env import BlueCarEnv
 from core.realtime import InfoStats, RestartAfterUpdate
 
-RUN = "v7"                 # one name per run: used for the model files and the TensorBoard log
+RUN = "v7b"                # one name per run: used for the model files and the TensorBoard log
 GAMES = 10                 # games running at once, each in its own process and browser
 STEPS = 1_200_000          # steps to train in THIS run (added on top when resuming). ~40-45 steps/s -> ~7.5-8 h
 
@@ -27,8 +27,9 @@ STEPS = 1_200_000          # steps to train in THIS run (added on top when resum
 #   a path    = that model, e.g. "models/v3_checkpoints/v3_100000_steps"
 # The step count continues from the checkpoint. Only resume with the same observations/actions:
 # a different reward or training setting is fine, a different _get_obs is not.
-RESUME = "models/bc_v4"    # v7: start from the behavior-cloning copy of Ryan's driving (train_bc.py): it drives the
-                           # first stretch and collects cube 1 every time, then steers the wrong way at the next curve
+RESUME = "models/v7_final" # v7b: continue v7 where it stopped (~530k), same settings (stall rule off again).
+                           # v7 started from the behavior-cloning copy bc_v4, learned to stand still (200-350k),
+                           # recovered and reached 1.2-1.7 cubes (475k+), still rising. (v8 = this + stall rule: failed)
 
 # v3 settled on "get cube 1, then dawdle safely until the time limit" and stopped exploring (entropy -0.34).
 # ENT_COEF: bonus for keeping the action choice random, so it keeps trying new things (SB3 default 0).
@@ -66,7 +67,7 @@ if __name__ == "__main__":   # required on Windows: each game process re-imports
     callbacks = [
         RestartAfterUpdate(),        # real time: release keys while PPO updates, restart games before each batch
         # rollout/cubes = average cubes per episode; lost / off_road = fraction of episodes ending that way
-        InfoStats(["cubes", "lost", "off_road", "won"]),
+        InfoStats(["cubes", "lost", "off_road", "won", "stalled"]),
         # Save a copy every ~50k steps, so a crash in the night doesn't lose everything.
         # There is no EvalCallback: in real time, test episodes would pause the 12 training games
         # (keys still held) for minutes. Test the checkpoints afterwards with test.py instead.

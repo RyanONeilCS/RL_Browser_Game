@@ -37,7 +37,7 @@ for episode in range(EPISODES):
         done = dones[0]
     info = infos[0]
     ended = ("WON" if info.get("won") else "lost" if info.get("lost") else "off road" if info.get("off_road")
-             else "time limit")
+             else "stalled" if info.get("stalled") else "time limit")
     results.append((total, steps, info.get("cubes", 0), ended))
     print(f"episode {episode}: {ended:10} after {steps:4} steps (~{steps * 0.16:.0f} s), "
           f"cubes {info.get('cubes', 0):2}, reward {total:7.2f}")
