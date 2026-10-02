@@ -183,3 +183,31 @@ Key test screenshots: run `explore.py` (saved in `screenshots/`, not in git).
 
 - 554k -> 1.75M steps, 6.9 h: cubes 1.9 -> ~2.8 (950k-1.55M), best batch 4.5, best episode 7 cubes, no wins.
   Plateaued from ~950k; last 200k slightly lower (2.1). ep_rew -14 -> -7.
+
+## Frame control + v7c / v7d (2026-10-01)
+
+- Virtual time alone (first version) was wrong: the game drew only 1 frame per advance, so steering barely worked
+  (v7b_final: 0.8 cubes vs 3.0 in real time). Fixed with frame control (core/browser.py): clock + one drawn frame per
+  1/60 s. Then v7b_final drives 3.2 cubes with 200 ms steps (real time 3.0; 250 ms gave 1.7). Training 62-67 steps/s
+  (real time ~38).
+- v7c (v7b_final + frame control + demonstration loss weight 0.1): cubes 2.82 -> ~0.8 after the first update and
+  stayed there; demo loss 0.97 -> 0.03 (memorised the recordings, drove like the plain copy). Demo loss off again.
+  (The background run was also cut after ~30 min by the tool's time limit; long runs must be started as their own
+  process.)
+- v7d: v7b_final + frame control, no demo loss.
+- v7d result (1.76M -> 2.96M steps, ~5 h, 62-67 fps): cubes 3.6 -> ~6 (best batch 7.6, best episode 11), no wins.
+  Of its 48 best episodes (8+ cubes), 34 ended at the 1000-step time limit: near the end of the track, but crawling
+  (200 s of game time vs Ryan's ~25 s). RAM: free dropped 7 -> 4.3 GB, then Windows paged idle memory out (back to ~12 GB);
+  speed unaffected.
+- v7e: v7d_final + time limit 2000 steps.
+- v7e (v7d_final + time limit 2000): **first wins** (7 batches with wins, up to 18% of a batch; game 1 recorded 2 wins,
+  10 cubes, ~1,300 steps = ~4.5 min vs Ryan's 25 s), around 3.3-3.5M steps. Then it got worse (cubes 5 -> ~2, no
+  more wins) and was stopped at 3.93M. Cause: every gas step on the road netted +0.04, so longer episodes paid more
+  (a slow lap ~+52 from gas vs +30 for winning). Checkpoint test (5 runs each, sampled): 3.36M 5.8 cubes, 3.41M 8.4
+  cubes (most consistent), 3.46M 4.2 cubes + 1 win.
+- v9: from v7e 3.41M; STEP_PENALTY 0.06 (gas on road nets -0.01/step, standing -0.06), speed bonus 0.02 per step under
+  1,500, learning rate 5e-5.
+- v9 result (3.42M -> 4.12M steps, ~3 h): **worse**, stopped. Cubes 5.8 -> ~3, episodes longer (774 -> 842), 3 batches
+  with wins (all early). The bigger time penalty did not make it faster; it drifted toward slower, erratic driving again.
+- **Best models so far: v7e checkpoints 3.41M (8.4 cubes avg in tests, usually near the finish) and 3.46M (1 win in 5).**
+  They drive the whole track from pixels but slowly (~3-4 min vs Ryan's 25 s).

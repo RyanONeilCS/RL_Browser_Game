@@ -197,6 +197,15 @@ def train(X, y, epochs, device, X_val=None, y_val=None):
     return model, best[1]
 
 
+def demo_dataset():
+    """All recordings as training data: (X, y) = stacked observations and (relabelled) actions, as used above.
+    Also used by train.py for the demonstration loss (core/demo_ppo.py)."""
+    runs = load_runs()
+    X = np.concatenate([stack(o) for o, _, _ in runs])
+    y = np.concatenate([relabel(a) for _, a, _ in runs])
+    return X, y
+
+
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     runs = load_runs()

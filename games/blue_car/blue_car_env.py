@@ -19,22 +19,24 @@ GAME_URL = "https://html-classic.itch.zone/html/13523181/index.html"
 LOAD_SECONDS = 20        # Unity needs a while to load before it reacts to keys
 STEP_SECONDS = 1 / 15    # how long each action is held; with the screenshot, one step takes ~0.15 s (~6.7 steps/s)
 
-# Virtual time (core/browser.py): instead of playing in real time, freeze the game and run exactly STEP_GAME_MS of
-# game time per step, as fast as the computer can. Same game time per step as real time (~0.15 s incl. the
-# screenshot), so models trained either way are compatible. Measured with 1 game: ~3 ms per step to advance +
-# ~39 ms screenshot, vs 150 ms waiting + 84 ms screenshot in real time. The game also stays frozen while PPO
-# updates, so the batch restarts (core/realtime.py) are not needed. False = real time (as all runs up to v7b).
-VIRTUAL_TIME = False
-STEP_GAME_MS = 150
+# Virtual time = frame control (core/browser.py): instead of playing in real time, the game is frozen and runs exactly
+# STEP_GAME_MS of game time per step (60 frames per game-second, clock advanced per frame), as fast as the computer
+# can: ~3.4x real time with 1 game. The game also stays frozen while PPO updates, so the batch restarts
+# (core/realtime.py) are not needed. False = real time (all runs up to v7b). (A first version advanced the clock in
+# one jump per step: the game then drew 1 frame per step and steering barely worked; v7b drove 0.8 cubes vs 3.0.)
+VIRTUAL_TIME = True
+STEP_GAME_MS = 200       # matches the real-time models: v7b_final drove 3.2 cubes with 200 ms steps (6 episodes),
+                         # 3.0 in real time; 250 ms gave 1.7
 RESPAWN_KEY = "Backspace"
 RESPAWN_SECONDS = 0.2    # wait after respawning. Measured: the respawn is done in < 0.1 s (12/12 resets back on
                          # the road at the start after 0.2 s). Keep it short: the games step in lockstep, so
                          # every reset makes all games wait (1.0 s cut training to ~18 steps/s with short episodes).
-MAX_STEPS = 1000         # time limit per episode (truncated, not a real ending): ~3 min at ~5.5 steps/s.
-                         # Was 500: v3 often ran out of time dawdling before cube 2. Must not be longer than
-                         # one PPO batch (N_STEPS in train.py), since the games restart after every batch.
+MAX_STEPS = 2000         # time limit per episode (truncated, not a real ending): 400 s of game time at 200 ms steps.
+                         # Was 1000: in v7d, 34 of its 48 best episodes (8+ cubes) hit the limit near the end of the track
+                         # (Ryan finishes in ~25 s with 10-13 cubes), so it never reached the finish and its win bonus.
+                         # With virtual time the games are frozen during PPO updates, so episodes can span batches.
 
-# Reward (v7b = v7's reward; v8's stall rule is off): see NOTES.md for why
+# Reward (v9): see NOTES.md for why
 CUBE_REWARD = 1.0        # the cube counter bottom-left went up
 LOSE_PENALTY = 20.0      # the "YOU LOSE" screen appeared, or off the road too long (was 10 until v3)
 
@@ -73,9 +75,12 @@ WIN_REWARD = 30.0
 # at step 90, which discounting makes ~40% cheaper. So it coasted until the timeout (0-1% gas, cubes 0.1-0.25).
 # None = off; a number = the rule is on.
 CUBE_TIMEOUT = None
-FAST_BONUS = 0.1
-FAST_STEPS = 300
-STEP_PENALTY = 0.01      # per step, so standing still isn't free (discounted, at most -1 in total: < LOSE_PENALTY)
+FAST_BONUS = 0.02        # v9: was 0.1 per step under 300, but the agent finished in ~1,300 steps, so it never got any
+FAST_STEPS = 1500        # (Ryan ~150 steps -> +27; a 1,300-step finish -> +4): getting faster always pays a bit
+# v9: was 0.01. With GAS_REWARD 0.05 every step of driving on the road netted +0.04, so a longer episode paid MORE
+# (a slow 1,300-step lap earned ~+52 from gas alone, more than the +30 win): v7e won a few times, then crawled.
+# Now driving with gas on the road nets -0.01 per step (time costs), standing / coasting -0.06 (much worse).
+STEP_PENALTY = 0.06
 
 # v1 learned to stand still: not moving never loses, so it beat driving and losing (-10).
 # v2 punishes every step where the picture barely changed.
@@ -112,15 +117,17 @@ OFF_ROAD_STEPS = 10      # ~1.5-2 s in a row: short slips at the edge (e.g. in a
 # Found with explore.py (see NOTES.md): w = gas, steering only works while moving,
 # s = reverse: loses right at the start, but is fine later (e.g. to back out of trees).
 ACTIONS = [
-    [],                  # 0 coast
+    [],                  # 0 coast (the only way to slow down, e.g. before a sharp curve)
     ["w"],               # 1 gas
     ["w", "a"],          # 2 gas + left
     ["w", "d"],          # 3 gas + right
-    ["a"],               # 4 left (while rolling)
-    ["d"],               # 5 right (while rolling)
-    [],                  # 6 was ["s"] (brake / reverse): removed in v4, reversing never helped. Kept as a
-                         #   duplicate of coast so there are still 7 actions and v3 models can be loaded.
+    ["w", "a"],          # 4 gas + left   (v10: was "left" without gas)
+    ["w", "d"],          # 5 gas + right  (v10: was "right" without gas)
+    ["w"],               # 6 gas          (v10: was a second coast; before v4 reverse)
 ]
+# v10: 6 of 7 actions include gas. Up to v9 the agent pressed gas on only 21-31% of steps (steering without gas and
+# coasting), while Ryan holds gas almost all the time, so it crawled (~4 min laps vs 25 s). Still 7 actions, so older
+# models load: their "left"/"right" now mean gas+left/gas+right.
 
 
 class BlueCarEnv(gym.Env):
@@ -129,15 +136,16 @@ class BlueCarEnv(gym.Env):
         episode, a result line for all. games: how many games train at once (to estimate the training step)."""
         super().__init__()
         self.recorder = ReplayRecorder(record_file, record_every, games, meta={"game": "blue_car",
-                                       "actions": ["coast", "gas", "gas+left", "gas+right", "left", "right", "coast"]}
+                                       "actions": ["coast", "gas", "gas+left", "gas+right", "gas+left", "gas+right", "gas"]}
                                        ) if record_file else None
-        self.browser = Browser(GAME_URL, headless=headless, viewport=(960, 600))
-        time.sleep(LOAD_SECONDS)
-        self.browser.page.locator("canvas").click()   # the game only gets keys after a click (focus)
-        # virtual_time: None = the VIRTUAL_TIME setting; record_demo.py passes False (a human plays in real time)
-        self.virtual_time = VIRTUAL_TIME if virtual_time is None else virtual_time
+        # virtual_time: None = the VIRTUAL_TIME setting; record_demo.py / play.py pass False (real time)
+        self.virtual_time = (VIRTUAL_TIME if virtual_time is None else virtual_time) and headless
+        self.browser = Browser(GAME_URL, headless=headless, viewport=(960, 600), frame_control=self.virtual_time)
+        self.browser.wait(LOAD_SECONDS)
+        self.browser.page.mouse.click(480, 280)       # the game only gets keys after a click (focus): canvas centre
         if self.virtual_time:
-            self.browser.use_virtual_time()
+            self.browser.wait(0.5)
+            self.browser.freeze()
 
         self.action_space = gym.spaces.Discrete(len(ACTIONS))
 
@@ -178,10 +186,10 @@ class BlueCarEnv(gym.Env):
     def step(self, action):
         self.browser.hold(ACTIONS[action])
         if self.virtual_time:
-            self.browser.advance(STEP_GAME_MS)   # exactly this much game time, then the game freezes again
+            frame = self.browser.advance(STEP_GAME_MS, screenshot=True)   # exactly this much game time, then frozen
         else:
             time.sleep(STEP_SECONDS)          # real time: the game runs while the keys are held
-        frame = self.browser.screenshot()
+            frame = self.browser.screenshot()
         self.steps += 1
 
         # Off the road: count steps in a row without road markings, reset the count when back on the road.

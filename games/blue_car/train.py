@@ -9,14 +9,15 @@ import glob
 import os
 os.chdir(os.path.dirname(os.path.abspath(__file__)))   # models/ and runs/ paths below are relative to this game's folder
 
-from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, VecMonitor
 
 from blue_car_env import VIRTUAL_TIME, BlueCarEnv
+from core.demo_ppo import DemoPPO
 from core.realtime import InfoStats, RestartAfterUpdate
+from train_bc import demo_dataset
 
-RUN = "v7b"                # one name per run: used for the model files and the TensorBoard log
+RUN = "v10"                # one name per run: used for the model files and the TensorBoard log
 GAMES = 10                 # games running at once, each in its own process and browser
 STEPS = 1_200_000          # steps to train in THIS run (added on top when resuming). ~40-45 steps/s -> ~7.5-8 h
 
@@ -27,18 +28,23 @@ STEPS = 1_200_000          # steps to train in THIS run (added on top when resum
 #   a path    = that model, e.g. "models/v3_checkpoints/v3_100000_steps"
 # The step count continues from the checkpoint. Only resume with the same observations/actions:
 # a different reward or training setting is fine, a different _get_obs is not.
-RESUME = "models/v7_final" # v7b: continue v7 where it stopped (~530k), same settings (stall rule off again).
-                           # v7 started from the behavior-cloning copy bc_v4, learned to stand still (200-350k),
-                           # recovered and reached 1.2-1.7 cubes (475k+), still rising. (v8 = this + stall rule: failed)
+RESUME = "models/v7e_checkpoints/v7e_3460440_steps"   # v10: v7e near its best (the checkpoint that won 1 of 5
+                           # test runs). New in v10: 6 of 7 actions include gas (see ACTIONS), v9's reward.
 
 # v3 settled on "get cube 1, then dawdle safely until the time limit" and stopped exploring (entropy -0.34).
 # ENT_COEF: bonus for keeping the action choice random, so it keeps trying new things (SB3 default 0).
 # N_STEPS: steps per game per batch. The games restart after every batch, so it must be at least as long as
 # an episode (MAX_STEPS in blue_car_env.py, now 1000 so a slow driver still has time to reach cube 2).
 ENT_COEF = 0.005          # v3b (0.01) explored mostly by leaving the road (98% off road): halved for v4
-LEARNING_RATE = 1e-4      # SB3 default 3e-4. Lower when starting from a copied model, so the first updates
-                          # (with a still-untrained value network) don't wipe out what it copied
+LEARNING_RATE = 1e-4      # back to 1e-4: the new actions change a lot, so it has to re-learn steering
 N_STEPS = 1024
+
+# Demonstration loss (core/demo_ppo.py): after each PPO update, extra small updates toward Ryan's recorded actions
+# (demos/, prepared like train_bc.py), so the copied knowledge of later track sections doesn't fade while it trains
+# on the early part. The weight shrinks to 0 over DEMO_DECAY steps: after that it's pure PPO again.
+DEMO_WEIGHT = 0.0          # 0 = off. v7c used 0.1: the demo loss dropped to ~0.03 within a few updates (it memorised
+                           # the 2,500 recorded steps) and cubes fell 2.82 -> ~0.8 (back to the plain copy's level)
+DEMO_DECAY = 500_000
 
 
 REPLAY_EVERY = 5          # game 1 saves every 5th episode with pictures for viewer.html (the others: nothing)
@@ -85,13 +91,18 @@ if __name__ == "__main__":   # required on Windows: each game process re-imports
     if start:
         print(f"Resuming from {start}")
         # Settings passed here replace the ones saved in the checkpoint.
-        model = PPO.load(start, env=env, tensorboard_log="runs/", n_steps=N_STEPS, ent_coef=ENT_COEF, verbose=1,
-                         learning_rate=LEARNING_RATE)
+        model = DemoPPO.load(start, env=env, tensorboard_log="runs/", n_steps=N_STEPS, ent_coef=ENT_COEF, verbose=1,
+                             learning_rate=LEARNING_RATE)
     else:
         print("Starting from scratch")
-        model = PPO("CnnPolicy", env, n_steps=N_STEPS, ent_coef=ENT_COEF, learning_rate=LEARNING_RATE,
-                    verbose=1, tensorboard_log="runs/")
-    print(f"n_steps {model.n_steps}, ent_coef {model.ent_coef}, learning_rate {model.learning_rate}")
+        model = DemoPPO("CnnPolicy", env, n_steps=N_STEPS, ent_coef=ENT_COEF, learning_rate=LEARNING_RATE,
+                        verbose=1, tensorboard_log="runs/")
+    print(f"n_steps {model.n_steps}, ent_coef {model.ent_coef}, learning_rate {model.learning_rate}, "
+          f"virtual time {VIRTUAL_TIME}")
+    if DEMO_WEIGHT:
+        X, y = demo_dataset()
+        model.set_demos(X, y, weight=DEMO_WEIGHT, decay_steps=DEMO_DECAY)
+        print(f"demonstration loss: {len(y)} recorded steps, weight {DEMO_WEIGHT} -> 0 over {DEMO_DECAY:,} steps")
 
     try:
         # reset_num_timesteps=False when resuming: keep counting from the checkpoint's step number

@@ -11,7 +11,7 @@ MODEL = "models/v1_final"       # or a checkpoint, e.g. "models/v1_checkpoints/v
 EPISODES = 3
 
 # Must be wrapped exactly like in train.py (same frame stacking), or the model sees the wrong shape.
-env = VecFrameStack(DummyVecEnv([lambda: BlueCarEnv(headless=False)]), n_stack=4)
+env = VecFrameStack(DummyVecEnv([lambda: BlueCarEnv(headless=False, virtual_time=False)]), n_stack=4)   # watch in real time
 model = PPO.load(MODEL)
 
 # The game already runs in real time, so no sleep is needed (unlike the toy car's stepped mode).
