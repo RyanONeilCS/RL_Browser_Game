@@ -117,17 +117,18 @@ OFF_ROAD_STEPS = 10      # ~1.5-2 s in a row: short slips at the edge (e.g. in a
 # Found with explore.py (see NOTES.md): w = gas, steering only works while moving,
 # s = reverse: loses right at the start, but is fine later (e.g. to back out of trees).
 ACTIONS = [
-    [],                  # 0 coast (the only way to slow down, e.g. before a sharp curve)
+    [],                  # 0 coast
     ["w"],               # 1 gas
     ["w", "a"],          # 2 gas + left
     ["w", "d"],          # 3 gas + right
-    ["w", "a"],          # 4 gas + left   (v10: was "left" without gas)
-    ["w", "d"],          # 5 gas + right  (v10: was "right" without gas)
-    ["w"],               # 6 gas          (v10: was a second coast; before v4 reverse)
+    ["a"],               # 4 left (while rolling)
+    ["d"],               # 5 right (while rolling)
+    [],                  # 6 was ["s"] (brake / reverse): removed in v4, reversing never helped. Kept as a
+                         #   duplicate of coast so there are still 7 actions and v3 models can be loaded.
 ]
-# v10: 6 of 7 actions include gas. Up to v9 the agent pressed gas on only 21-31% of steps (steering without gas and
-# coasting), while Ryan holds gas almost all the time, so it crawled (~4 min laps vs 25 s). Still 7 actions, so older
-# models load: their "left"/"right" now mean gas+left/gas+right.
+# The best models (v7e) use these actions. v10 tried 6 of 7 actions with gas (left/right/coast2 -> gas versions,
+# since the agent pressed gas on only 21-31% of steps): it threw away too much of v7e's driving (8 -> ~0.7 cubes in
+# 2.7 h) and was stopped. Its models need that action set.
 
 
 class BlueCarEnv(gym.Env):
@@ -136,7 +137,7 @@ class BlueCarEnv(gym.Env):
         episode, a result line for all. games: how many games train at once (to estimate the training step)."""
         super().__init__()
         self.recorder = ReplayRecorder(record_file, record_every, games, meta={"game": "blue_car",
-                                       "actions": ["coast", "gas", "gas+left", "gas+right", "gas+left", "gas+right", "gas"]}
+                                       "actions": ["coast", "gas", "gas+left", "gas+right", "left", "right", "coast"]}
                                        ) if record_file else None
         # virtual_time: None = the VIRTUAL_TIME setting; record_demo.py / play.py pass False (real time)
         self.virtual_time = (VIRTUAL_TIME if virtual_time is None else virtual_time) and headless

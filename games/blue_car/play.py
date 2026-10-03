@@ -7,7 +7,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 
 from blue_car_env import BlueCarEnv
 
-MODEL = "models/v1_final"       # or a checkpoint, e.g. "models/v1_checkpoints/v1_500000_steps"
+MODEL = "models/v7e_checkpoints/v7e_3460440_steps"   # best so far (won 1 of 5 test runs); or v7e_3410440_steps
 EPISODES = 3
 
 # Must be wrapped exactly like in train.py (same frame stacking), or the model sees the wrong shape.

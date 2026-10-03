@@ -211,3 +211,17 @@ Key test screenshots: run `explore.py` (saved in `screenshots/`, not in git).
   with wins (all early). The bigger time penalty did not make it faster; it drifted toward slower, erratic driving again.
 - **Best models so far: v7e checkpoints 3.41M (8.4 cubes avg in tests, usually near the finish) and 3.46M (1 win in 5).**
   They drive the whole track from pixels but slowly (~3-4 min vs Ryan's 25 s).
+- v10 (from v7e 3.46M; 6 of 7 actions with gas; v9 reward; learning rate 1e-4), 3.47M -> 4.02M steps, 2.7 h: **failed**,
+  stopped. Cubes 0.4 -> stuck at ~0.6-0.7 (v7e ~8), best episode 3 cubes, episodes longer (55 -> 267) without more
+  cubes (probably crawling with the one remaining coast action). Actions reverted to v7e's set.
+
+## Where Blue Car ended up (2026-10-02)
+
+- **Best models: `models/v7e_checkpoints/v7e_3410440_steps` (most consistent: 8.4 cubes avg in tests, usually near the
+  finish) and `v7e_3460440_steps` (won 1 of 5 test runs).** They drive the whole track from pixels and sometimes
+  finish, but slowly (~3-4 min of game time vs Ryan's ~25 s). Use with the current env (v7e actions, virtual time 200 ms).
+- What worked: copying Ryan first (behavior cloning) then PPO; the off-road rule; the cube approach reward; the win
+  detection; frame-control virtual time (~1.7-2x faster, exact steps); a longer time limit (first wins).
+- What didn't: rewards measured from noisy pixels (still/progress/optical flow), the stall rule, a demonstration loss
+  at weight 0.1, a bigger time penalty, and gas-only actions. PPO kept drifting toward slow, safe driving.
+- If resumed: record 10-20 more runs (3x the data), retrain the copy, then PPO from a copy that drives at Ryan's speed.
