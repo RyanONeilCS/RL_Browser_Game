@@ -7,6 +7,7 @@ Real time: ~7 steps/s per game, so 10 games ~50-60 steps/s (1M steps ~ 5 h). Ctr
 """
 import glob
 import os
+import sys
 import time
 os.chdir(os.path.dirname(os.path.abspath(__file__)))   # models/ and runs/ paths below are relative to this game's folder
 
@@ -18,7 +19,8 @@ from core.realtime import InfoStats
 from donkey_kong_env import DonkeyKongEnv
 
 RUN = "v2c"                # one name per run: used for the model files, the replay and the TensorBoard log
-GAMES = 10                 # games running at once, each in its own process and browser
+GAMES = int(sys.argv[1]) if len(sys.argv) > 1 else 10   # games at once (each its own process + browser), e.g.
+                           # `python train.py 2` while playing something heavy (~4 GB instead of ~14 GB), 10 otherwise
 STEPS = 3_000_000          # steps to train in THIS run (more than one night: stop it whenever you like)
 
 # Continue training a saved model instead of starting from random weights:
@@ -27,8 +29,8 @@ STEPS = 3_000_000          # steps to train in THIS run (more than one night: st
 #   a path    = that model, e.g. "models/v1_checkpoints/v1_100000_steps"
 # Only resume with the same observations/actions: a different reward or training setting is fine.
 #   "latest:v1" = the newest checkpoint of another run (continue its model under this run's name)
-RESUME = "latest:v2b"      # v2c: v2b (reaches the 3rd girder in ~84% of lives, then often waits in a safe pocket)
-                           # + a step penalty. Earlier: "models/v2_final" (v2b), None (v2, from scratch)
+RESUME = "latest"          # v2c continues itself: the newest of its checkpoints and models/v2c_final (a clean stop).
+                           # v2c was started from "latest:v2b" (v2b + the step penalty). Earlier: "models/v2_final" (v2b)
 
 ENT_COEF = 0.01            # bonus for keeping the action choice random, so it keeps exploring (SB3 default 0).
                            # Finding the ladders is the hard part here, so a bit more than Blue Car's 0.005.
@@ -37,7 +39,8 @@ LEARNING_RATE = 2e-4       # v1b: was 3e-4 (SB3 default): approx_kl grew from 0.
 TARGET_KL = 0.02           # v1b: stop an update early once it has changed the policy this much
                            # v2: learning rate 2e-4 (was 1e-4 for v1b/v1c, which resumed a trained model): a fresh
                            # network needs to move faster; TARGET_KL still caps every update
-N_STEPS = 512              # steps per game per batch -> 5,120 per batch with 10 games (~1.5-2 min), then an update
+N_STEPS = 5120 // GAMES    # steps per game per batch: every batch is 5,120 steps whatever GAMES is (10 games: 512
+                           # each, ~1.5 min; 2 games: 2,560 each, ~6.5 min), so the updates stay the same size
 
 START_GAP = 3              # seconds between starting the games
 REPLAY_EVERY = 50          # game 1 saves every 50th episode with pictures (in runs/<RUN>_episodes.jsonl, with the
@@ -65,6 +68,21 @@ def make_env(game=0):
                          game=game + 1, log_all=(game == 0), shared=True, best_file=f"runs/{RUN}_best.json")
 
 
+class StopFile(BaseCallback):
+    """Stop cleanly when the file runs/<RUN>.stop exists: the current batch finishes, the model is saved
+    (models/<RUN>_final, see the end of this file) and the file is removed. Use it to restart with a different
+    number of games without losing anything (PowerShell):  New-Item games/donkey_kong/runs/<RUN>.stop
+    then start again, e.g.  python games/donkey_kong/train.py 2   (RESUME = "latest" continues from the saved model)"""
+
+    def _on_step(self):
+        path = f"runs/{RUN}.stop"
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"{path} found: stopping and saving", flush=True)
+            return False
+        return True
+
+
 class TrainStepToGames(BaseCallback):
     """Tell every game the real training step before each batch, so saved episodes show the true step."""
 
@@ -76,11 +94,11 @@ class TrainStepToGames(BaseCallback):
 
 
 def newest_checkpoint(run):
-    files = glob.glob(f"models/{run}_checkpoints/{run}_*_steps.zip")
+    """The newest saved model of a run: its checkpoints and models/<run>_final.zip (saved by a clean stop), by file time."""
+    files = glob.glob(f"models/{run}_checkpoints/{run}_*_steps.zip") + glob.glob(f"models/{run}_final.zip")
     if not files:
         return None
-    newest = max(files, key=lambda f: int(f.rsplit("_", 2)[-2]))   # the step number in the file name
-    return newest[:-len(".zip")]
+    return max(files, key=os.path.getmtime)[:-len(".zip")]
 
 
 if __name__ == "__main__":   # required on Windows: each game process re-imports this file
@@ -89,6 +107,7 @@ if __name__ == "__main__":   # required on Windows: each game process re-imports
     env = VecFrameStack(VecMonitor(SubprocVecEnv([lambda g=g: make_env(g) for g in range(GAMES)])), n_stack=4)
 
     callbacks = [
+        StopFile(),
         ReleaseKeysDuringUpdate(),
         TrainStepToGames(),
         # rollout/height = average best checkpoint line per episode (the number that matters),
