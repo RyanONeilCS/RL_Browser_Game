@@ -63,8 +63,8 @@ So a jump lifts Mario about one body height, under half the gap between girders.
 - [x] 7. Reward v1: lines every 25 px once per life (+1), death −10, Pauline +30 + up to +10 for speed
 - [x] 8. Done and reset: one episode = one life, reset never waits (see "v1" below)
 - [x] 9. check_env passes; random agent: best line ~1 (a jump on the bottom girder), dies after 70-230 steps
-- [ ] 10. Train v1 (started overnight 2026-10-07, see below)
-- [ ] 11. Evaluate
+- [x] 10. Train: v1 -> v1b -> v1c -> v2 -> v2b -> v2c (see "Where it stands" at the end)
+- [ ] 11. Evaluate: best so far reaches the 3rd girder in ~85-90% of lives; nothing has finished the stage yet
 
 ## v1 (written by Claude on 2026-10-07 night, to run overnight; Ryan may rewrite it)
 
@@ -111,7 +111,8 @@ is line 2, every girder ~2.4 lines more, the top ~14), `rollout/died`, `rollout/
 - Does Continue Game start at the level you reached? (see the table)
 - Order of the stages: arcade order is 25 m -> 75 m -> 100 m on the first loop, 50 m added later. Is it the same here?
 - What happens when Mario reaches Pauline (a level-complete screen? straight to the next stage?)
-- Does the game kill Mario when the BONUS timer reaches 0, like the arcade game?
+- Does the game kill Mario when the BONUS timer reaches 0, like the arcade game? (Probably: in v2/v2b/v2c every life
+  ended in death, even the ones that waited 600+ steps in a safe spot; none reached the 1500-step time limit.)
 - How far up a broken ladder can Mario climb?
 - Does Down do anything when not on a ladder? Can Mario jump while on a ladder?
 - How many points per barrel jumped / hammer smash (the score could be read from the top-left digits)?
@@ -213,3 +214,58 @@ is line 2, every girder ~2.4 lines more, the top ~14), `rollout/died`, `rollout/
   death. Data: all lives still end in death, but v2b had 29 lives of 600+ steps (v2: 10), all stuck at line 4.
 - v2c (from v2b's newest checkpoint, 2026-10-09 afternoon): **step penalty -0.01 per step while alive** (not on waiting
   screens). Risk Ryan raised: it could make it rush and die; death (-10) still costs far more than 100 steps of waiting.
+
+## v2c result (2026-10-09)
+
+- v2c = v2b + step penalty -0.01 per step while alive. Ran 2:10-3:05 PM (10 games), 3:05-3:08 PM (2 games, while Ryan
+  played), 4:56-5:27 PM (10 games); 5.90M -> 6.22M steps, then stopped cleanly with the stop file (`models/v2c_final`).
+- Short run, but: height back to ~3.9 (max 4.25 for one report), ladders ~2.9 per life; game 1's 98 lives: 88 ended
+  with best line 4 (3rd girder), 8 lasted 600+ steps (v2b: 29 in its last 300), average length 345 steps (v2b ~336), so
+  **no rushing** and somewhat less waiting. v2c's best: line 5. Still no 3rd -> 4th girder climb.
+- The update-size cap (target_kl 0.02) stopped many updates after 1-2 passes ("Early stopping at step 0/1"): with
+  learning rate 2e-4 each pass changes the policy a lot. If continued: learning rate 1e-4.
+- Stopped by Ryan to record many more runs first (plan: test how much lots of recordings help, possibly from scratch).
+
+## Where it stands (2026-10-09 evening)
+
+All runs (barrel stage only; "line" = height line, 25 px each; 3rd girder ~ line 4-5, 4th ~ 7-8, Pauline ~ 13-14):
+
+| Run | Start | Change | Steps | Result |
+|---|---|---|---|---|
+| v1 | scratch | height lines, death -10, 84x84 whole screen | 0 -> 0.55M | ~1.3; tracker drifted onto a fireball (fake line 6); updates too big (KL 0.21) |
+| v1b | v1 | stricter Mario tracking, crash recovery, lr 1e-4 + target_kl, browser restarts, ads blocked | -> 1.76M | ~2.7-3.0: climbs the 1st ladder, wanders on the 2nd girder |
+| v1c | v1b | exploration cells (+0.1 per new 40x30 cell per life), speed bonus up to 45 | -> 4.56M | no change (~2.95) |
+| v2 | scratch | 140x140 crop of the play area, ladder-foot bonus (9 working ladders) | 0 -> 3.0M | breakthrough to ~3.7 at ~0.8M; line 8 once; ~31% of lives reach the 3rd girder |
+| v2b | v2 | reward for walking toward the right ladder | -> 5.9M | ~84% reach the 3rd girder, then stall in a safe pocket; best line 6 |
+| v2c | v2b | step penalty -0.01 | -> 6.22M | ~88% reach the 3rd girder, less stalling, no rushing; best line 5 |
+
+The wall: getting from the 3rd girder to the 4th (working ladders at x 278 and 407). Behavior cloning of Ryan's 27 lives
+on top of v2b made it worse (whole network disturbed by ~1,700 steps).
+
+What the env does now (donkey_kong_env.py):
+- Actions (7): left, right, up, down, jump, jump left, jump right; no "do nothing".
+- Observation: 140x140 grayscale crop of the play area, 4 stacked frames (train.py).
+- Reward per life: +1 per new height line, +1 per working-ladder foot reached, +0.1 per new exploration cell,
+  +-1 per 300 px toward/away from the nearest working ladder up from Mario's girder, -0.01 per step alive, -10 death,
+  +30 + up to +45 for reaching Pauline fast (never happened). Points (score) are NOT in the reward.
+- One episode = one life; reset never waits (the waiting screens are steps with reward 0 and no keys).
+- Mario tracking: red + navy blob of Mario's size, must start on the bottom girder, can't jump more than ~1 girder up
+  while lost (fireballs / barrels used to fool it).
+- Browser per game restarted every 30 min (memory leak, probably Ruffle); ads blocked with Chromium's
+  `--host-resolver-rules` (sends ~11 ad / tracking hosts to 0.0.0.0; saves ~3 GB with 10 games; `page.route` broke the
+  keyboard); a crashed page restarts that browser instead of stopping the run.
+
+Running training (train.py):
+- `python games/donkey_kong/train.py` (10 games, ~63 steps/s, ~14 GB RAM) or `python games/donkey_kong/train.py 2`
+  (2 games, ~4 GB, ~13 steps/s). Every batch is 5,120 steps whatever the number of games.
+- `RESUME = "latest"`: continues the run from its newest checkpoint or models/<RUN>_final, whichever is newer.
+- Stop cleanly: Ctrl+C in its terminal, or create `runs/<RUN>.stop` (finishes the batch, saves, exits).
+- `ram_watchdog.ps1`: logs memory every 5 min to runs/v1_ram.log and stops the training below 1.5 GB available.
+- Recording file: one per run, `runs/<RUN>_episodes.jsonl` (every 50th life of game 1 + firsts at a new line, first
+  win, best so far from all games), open it in viewer.html.
+
+Next (Ryan's plan): record a LOT of runs with record_demo.py, then test how much they help, possibly from scratch.
+Ideas for using them better than plain cloning on top of a trained model:
+- Clone from scratch (BASE = None in train_bc.py) with many recordings, then PPO from the copy with a low learning rate.
+- Demonstration loss during PPO (core/demo_ppo.py) with a small weight (~0.02, fading out), so PPO keeps what works.
+- Only the 3rd-girder-and-up part (MIN_LINE = 4) if starting from a trained model.

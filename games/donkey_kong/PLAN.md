@@ -105,3 +105,19 @@ ladder" (a fixed list of ladder positions per stage, once per platform). Not pla
    (NOTES). Without it, the agent only sees stage 2 after beating stage 1.
 5. Record yourself on every stage (demos for the stages it can't reach yet).
 6. Mix stages to avoid forgetting (README: Notes for future games). Save a model per stage.
+
+## What changed since this plan (2026-10-07 -> 2026-10-09)
+
+The plan above is the starting point (v1). What was added on the way, and why (details in NOTES.md):
+
+- **Observation:** 84x84 of the whole screen -> 140x140 crop of the play area (v2): ladders were ~2 px smudges.
+- **Ladder rewards (v2):** +1 the first time per life Mario reaches the foot of each of the 9 working ladders.
+- **Exploration cells (v1c):** +0.1 for each new 40x30 px cell per life (from Mario's standing height, so jumps don't count).
+- **Walking toward the right ladder (v2b):** +-1 per 300 px closer to / farther from the nearest working ladder up.
+- **Step penalty (v2c):** -0.01 per step alive, against waiting in safe spots (death 600+ steps away is worth almost
+  nothing after discounting).
+- **Speed bonus** raised from 10 to 45 (v1c) so exploring never beats finishing fast (Ryan's point).
+- Kept from the plan: height lines once per life, death -10, Pauline +30, no points, no "do nothing", one life per episode.
+- Still open from the plan: points as a small reward (not added: Ryan doesn't want barrel-jump farming), the other
+  stages (ladder positions, Mario's start and a win check per stage), and recordings (first 27 lives recorded; cloning on
+  top of a trained model made it worse).
