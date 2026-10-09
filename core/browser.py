@@ -33,10 +33,13 @@ _open = 0
 
 
 class Browser:
-    def __init__(self, url, headless=True, viewport=(700, 700), gpu=True, frame_control=False):
+    def __init__(self, url, headless=True, viewport=(700, 700), gpu=True, frame_control=False, extra_args=None):
         """gpu=True: render with the real graphics card. Headless Chromium otherwise draws WebGL games on the
         CPU (SwiftShader), which made Blue Car screenshots ~35x slower (2.4 s instead of 67 ms).
-        frame_control=True: nothing is drawn unless we ask (see the top of this file). Headless only."""
+        frame_control=True: nothing is drawn unless we ask (see the top of this file). Headless only.
+        extra_args: more Chromium command-line settings, e.g. ["--host-resolver-rules=MAP ads.example.com 0.0.0.0"]
+        to block ad hosts (Donkey Kong). Unlike Playwright's page.route, this doesn't intercept the page's requests,
+        which broke the Donkey Kong game's keyboard."""
         global _playwright, _open
         if _playwright is None:
             _playwright = sync_playwright().start()
@@ -50,6 +53,7 @@ class Browser:
         self.frame_control = frame_control
         if frame_control:
             args += ["--deterministic-mode", "--enable-begin-frame-control", "--run-all-compositor-stages-before-draw"]
+        args += extra_args or []
         self._browser = _playwright.chromium.launch(headless=headless, args=args)
         self.page = self._browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
         self._held = set()

@@ -23,6 +23,13 @@ Toy car (`games/toy_car/`):
 | `python games/blue_car/record_demo.py` | Blue Car: record yourself driving (for behavior cloning). Backspace = next run, Ctrl+C = stop and save to `games/blue_car/demos/`. |
 | `python games/blue_car/train_bc.py` | Blue Car: behavior cloning: train the network to copy all recordings in `demos/` (a few minutes, GPU). Saves a PPO model that `train.py` can continue from. |
 | `python games/blue_car/explore.py` | Blue Car: opens the game, tries each key, saves screenshots to `games/blue_car/screenshots/`, measures steps/s. See `games/blue_car/NOTES.md`. |
+| `python games/donkey_kong/train.py` | Donkey Kong: train with 10 games at once (~50-60 steps/s, real time). Checkpoints every ~50k steps in `games/donkey_kong/models/v1_checkpoints/`. Log of a background run: `games/donkey_kong/runs/v1_train.log`. |
+| `python games/donkey_kong/test.py` | Donkey Kong: test a model (or a random agent with `MODEL = None`) without a window: how each episode ended, best height line, reward. |
+| `python games/donkey_kong/play.py` | Donkey Kong: watch a trained agent in a window. Set `MODEL` at the top. |
+| `python games/donkey_kong/record_demo.py` | Donkey Kong: record yourself playing (arrow keys + Space) for behavior cloning. Ctrl+C = stop and save to `games/donkey_kong/demos/`. |
+| `python games/donkey_kong/train_bc.py` | Donkey Kong: copy all recordings in `demos/`, starting from v2's newest checkpoint. Saves `models/bc_v2`; continue with `RESUME = "models/bc_v2"` in train.py. |
+| open `games/donkey_kong/viewer.html` | Donkey Kong: watch recorded lives and a chart of the best height line over training. Choose `runs/<run>_episodes.jsonl` (one file per run: every 50th life of game 1 plus the special ones from all games, tagged with why) or `runs/test_<model>.jsonl`. Choose it again for newer lives. |
+| `python games/donkey_kong/explore.py` | Donkey Kong (freekong.org): opens the game, starts it, tries each key, saves screenshots to `games/donkey_kong/screenshots/`, measures speed. See `games/donkey_kong/NOTES.md`. |
 | `cd games/toy_car` then `python -c "from stable_baselines3.common.env_checker import check_env; from car_env import CarEnv; env = CarEnv(); check_env(env); env.close(); print('ok')"` | Check the env's format after changing observations/actions. |
 
 **TensorBoard:** start it in a *second* terminal (the first one is busy training; activate the venv there too).
@@ -58,6 +65,15 @@ games/
     record_demo.py          record yourself driving (for behavior cloning)
     train_bc.py             behavior cloning: learn to copy the recordings
     viewer.html             replay of recorded episodes + chart of training progress
+    train.py  play.py  test.py
+  donkey_kong/              Donkey Kong (Flash game in Ruffle on freekong.org, pixels, real time): v1 training
+    NOTES.md                what's known about the game + checklist progress (start here)
+    PLAN.md                 the plan: actions, episodes, reward v1, detectors to build, multiple levels
+    donkey_kong_env.py      env v1: actions, observations, reward (height lines), Mario tracking, one life per episode
+    explore.py              starts the game, tries keys, watches a death and game over, measures speed (no RL)
+    viewer.html             replay of recorded episodes + chart of the best height line over training
+    record_demo.py          record yourself playing (for behavior cloning)
+    train_bc.py             behavior cloning: copy the recordings, starting from a PPO model
     train.py  play.py  test.py
   toy_car/                  the toy car test game
     game/                   the game itself (open game/index.html to drive it yourself)
